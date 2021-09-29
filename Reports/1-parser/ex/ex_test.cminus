@@ -1,0 +1,36 @@
+void sort(int ar[], int len)
+{
+    int i;
+    int j;
+    int temp;
+    i = 0;
+    while (i < len - 1)
+    {
+        j = 0;
+        while (j < len - i - 1)
+        {
+            if (ar[j] > ar[j + 1])
+            {
+                temp = ar[j];
+                ar[j] = ar[j + 1];
+                ar[j + 1] = temp;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+
+int main(void)
+{
+    int ar[10];
+    int i;
+    i = 0;
+    while(i < 10)
+    {
+        ar[i] = 10 - i;
+        i = i + 1;
+    }
+    sort(ar, 10);
+    return 0;
+}
