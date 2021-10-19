@@ -42,7 +42,7 @@ int main()
     builder->create_store(CONST_INT(10), a0Gep);                             // store 10 in a[0]
 
     auto a1Gep = builder->create_gep(aAlloca, {CONST_INT(0), CONST_INT(1)}); // get a[1] address
-    auto a0Load = builder->create_load(a1Gep);                               // get a[0] value
+    auto a0Load = builder->create_load(a0Gep);                               // get a[0] value
     auto mul = builder->create_imul(a0Load, CONST_INT(2));                   // a[1] = a[0] * 2
     builder->create_store(mul, a1Gep);                                       // store result into a[1]
 

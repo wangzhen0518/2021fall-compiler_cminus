@@ -28,7 +28,7 @@ int main()
     Type *FloatType = Type::get_float_type(module);
 
     // main function
-    auto mainFunc = Function::create(FunctionType::get(Int32Type, {}), ",main", module);
+    auto mainFunc = Function::create(FunctionType::get(Int32Type, {}), "main", module);
     auto bb = BasicBlock::create(module, "entry", mainFunc);
     builder->set_insert_point(bb);
 

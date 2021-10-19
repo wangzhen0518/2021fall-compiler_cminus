@@ -50,9 +50,9 @@ int main()
     builder->set_insert_point(whileBlock);
     auto iLoad_2 = builder->create_load(iAlloca); // load i value
     auto add = builder->create_iadd(iLoad_2, CONST_INT(1));
-    builder->create_store(iLoad_2, iAlloca);           // i = i + 1
+    builder->create_store(add, iAlloca);           // i = i + 1
     auto aLoad = builder->create_load(aAlloca);        // load a value
-    auto add_2 = builder->create_iadd(aLoad, iLoad_2); // a = a + i
+    auto add_2 = builder->create_iadd(aLoad, add); // a = a + i
     builder->create_store(add_2, aAlloca);
     builder->create_br(judgeBlock);
 
