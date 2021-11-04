@@ -1,5 +1,13 @@
 #include "cminusf_builder.hpp"
 
+#define DEBUG
+#ifdef DEBUG  // 用于调试信息,大家可以在编译过程中通过" -DDEBUG"来开启这一选项
+#define DEBUG_OUTPUT std::cout << __LINE__ << std::endl  // 输出行号的简单示例
+#define DEBUG_INFO(S) std::cout << S << std::endl
+#else
+#define DEBUG_OUTPUT
+#endif
+
 #define ERROR(comment) std::cout << comment
 
 #define CONST_FP(num) ConstantFP::get((float)num, module.get())
@@ -15,11 +23,11 @@
 int ast_num_i;
 float ast_num_f;
 CminusType ast_num_type;
-Constant* ast_num_val;
+// Constant* ast_num_val;
 Function* main_fun;
 AllocaInst* return_val;
-Value* val;  // value of function call, expression, etc
-Value* var;  // the variable to be assigned
+Value* ast_val;  // value of function call, expression, etc
+// Value* var;  // the variable to be assigned
 
 void CminusfBuilder::visit(ASTProgram& node) {
     for (auto& decl : node.declarations)
@@ -27,20 +35,23 @@ void CminusfBuilder::visit(ASTProgram& node) {
 }
 
 void CminusfBuilder::visit(ASTNum& node) {
+    DEBUG_INFO("visit num");
     if (node.type == TYPE_INT) {
         ast_num_type = TYPE_INT;
         ast_num_i = node.i_val;
-        ast_num_val = CONST_INT(node.i_val);
+        ast_val = CONST_INT(node.i_val);
     } else if (node.type == TYPE_FLOAT) {
         ast_num_type = TYPE_FLOAT;
         ast_num_f = node.f_val;
-        ast_num_val = CONST_FP(node.f_val);
+        ast_val = CONST_FP(node.f_val);
     }
+    DEBUG_INFO("visit num over");
 }
 
 void CminusfBuilder::visit(ASTVarDeclaration& node) {
+    DEBUG_INFO("visit variable declaration");
     if (scope.in_global()) {
-        if (node.num == nullptr) {
+        if (node.num == nullptr) {  // not array
             if (node.type == TYPE_INT) {
                 Value* val =
                     GlobalVariable::create(node.id, module.get(), int32_type,
@@ -53,7 +64,7 @@ void CminusfBuilder::visit(ASTVarDeclaration& node) {
                 scope.push(node.id, val);
             } else
                 ERROR("Cannot define a variable of void type\n");
-        } else {
+        } else {  // array
             if (node.type == TYPE_INT) {
                 node.num->accept(*this);
                 if (ast_num_i <= 0)
@@ -112,9 +123,11 @@ void CminusfBuilder::visit(ASTVarDeclaration& node) {
                 ERROR("Cannot define a variable of void type\n");
         }
     }
+    DEBUG_INFO("visit variable declaration over");
 }
 
 void CminusfBuilder::visit(ASTFunDeclaration& node) {
+    DEBUG_INFO("visit function declaration");
     // parameter list
     std::vector<Type*> param_types;
     if (node.params.size() != 0 && node.params[0]->type != TYPE_VOID) {
@@ -139,13 +152,10 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
     Type* return_type;
     if (node.type == TYPE_VOID)
         return_type = void_type;
-    else if (node.type == TYPE_INT) {
+    else if (node.type == TYPE_INT)
         return_type = int32_type;
-        return_val = builder->create_alloca(int32_type);
-    } else {  // TYPE_FLOAT
+    else  // TYPE_FLOAT
         return_type = float_type;
-        return_val = builder->create_alloca(float_type);
-    }
 
     auto Fun = Function::create(FunctionType::get(return_type, param_types),
                                 node.id, module.get());
@@ -161,6 +171,7 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
         return_val = builder->create_alloca(int32_type);
     else if (node.type == TYPE_FLOAT)
         return_val = builder->create_alloca(float_type);
+
     if (node.params.size() != 0 && node.params[0]->type != TYPE_VOID) {
         for (auto param : node.params) {
             if (param->type == TYPE_VOID)
@@ -177,6 +188,7 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
         builder->create_store(args[i], scope.find(node.params[i]->id));
     node.compound_stmt->accept(*this);
     scope.exit();
+    DEBUG_INFO("visit function declaration over");
 }
 
 void CminusfBuilder::visit(ASTParam& node) {
@@ -196,9 +208,19 @@ void CminusfBuilder::visit(ASTParam& node) {
     scope.push(node.id, param_ptr);
 }
 
-void CminusfBuilder::visit(ASTCompoundStmt& node) {}
+void CminusfBuilder::visit(ASTCompoundStmt& node) {
+    DEBUG_INFO("visit compound statement");
+    for (auto& decl : node.local_declarations)
+        decl->accept(*this);
+    for (auto& stmt : node.statement_list)
+        stmt->accept(*this);
+    DEBUG_INFO("visit compound statement over");
+}
 
-void CminusfBuilder::visit(ASTExpressionStmt& node) {}
+void CminusfBuilder::visit(ASTExpressionStmt& node) {
+    if (node.expression != nullptr)
+        node.expression->accept(*this);
+}
 
 void CminusfBuilder::visit(ASTSelectionStmt& node) {}
 
@@ -207,106 +229,254 @@ void CminusfBuilder::visit(ASTIterationStmt& node) {}
 void CminusfBuilder::visit(ASTReturnStmt& node) {}
 
 void CminusfBuilder::visit(ASTVar& node) {
-    var = scope.find(node.id);
+    DEBUG_INFO("visit variable");
+    auto var = scope.find(node.id);
     // if var is 'a[i]', it is necessary to get 'a[i]'
     // as var is 'a' now
     if (node.expression != nullptr) {
         node.expression->accept(*this);
-        auto gep = builder->create_gep(var, {CONST_INT(0), val});
+        // TODO: type conversion
+
+        if (ast_val->get_type()->get_pointer_element_type()->is_float_type())
+            ast_val = builder->create_fptosi(ast_val, var->get_type());
+        auto gep = builder->create_gep(var, {CONST_INT(0), ast_val});
+        var = builder->create_load(gep);
     }
+
     // else var is 'a', it is enough
+    ast_val = var;
+    DEBUG_INFO("visit variable over");
+    DEBUG_INFO(node.id);
 }
 
 void CminusfBuilder::visit(ASTAssignExpression& node) {
-    if (node.var != nullptr)
+    DEBUG_INFO("visit assignment expression");
+    if (node.var == nullptr)
+        node.expression->accept(*this);
+    else {
         node.var->accept(*this);
-    node.expression->accept(*this);
+        auto l_var = ast_val;
+        node.expression->accept(*this);
+        DEBUG_OUTPUT;
+        Value* r_var;
+        if (ast_val->get_type()->is_pointer_type())
+            r_var = builder->create_load(ast_val);
+        else
+            r_var = ast_val;
+        DEBUG_OUTPUT;
+        auto l_type = l_var->get_type()->get_pointer_element_type();
+        DEBUG_OUTPUT;
+        auto r_type = r_var->get_type();
+
+        if ((l_type->is_integer_type() && r_type->is_integer_type()) ||
+            (l_type->is_float_type() && r_type->is_float_type()))
+            // left and right are the same type
+            builder->create_store(r_var, l_var);
+        else if (l_type->is_integer_type() && r_type->is_float_type()) {
+            // left is integer, and right is float
+            auto fp_si = builder->create_fptosi(r_var, r_type);
+            builder->create_store(fp_si, l_var);
+        } else {  // left is float, and right is integer
+            auto si_fp = builder->create_sitofp(r_var, r_type);
+            builder->create_store(si_fp, l_var);
+        }
+    }
+    DEBUG_INFO("visit assignment expression over");
 }
 
 void CminusfBuilder::visit(ASTSimpleExpression& node) {
+    DEBUG_INFO("visit simple expression");
     if (node.additive_expression_r == nullptr)
         node.additive_expression_l->accept(*this);
     else {
         node.additive_expression_l->accept(*this);
-        auto l_val = val;
+        auto l_val = builder->create_load(ast_val);
         node.additive_expression_r->accept(*this);
-        auto r_val = val;
+        auto r_val = builder->create_load(ast_val);
+        auto l_type = l_val->get_type();
+        auto r_type = r_val->get_type();
         switch (node.op) {
             case OP_LE:
-                val = builder->create_icmp_eq(l_val, r_val);
+                if (l_type->is_integer_type() && r_type->is_integer_type())
+                    ast_val = builder->create_icmp_le(l_val, r_val);
+                else if (l_type->is_integer_type() && r_type->is_float_type()) {
+                    auto si_fp = builder->create_sitofp(l_val, l_type);
+                    ast_val = builder->create_fcmp_le(si_fp, r_val);
+                } else if (l_type->is_float_type() &&
+                           r_type->is_integer_type()) {
+                    auto si_fp = builder->create_sitofp(r_val, r_type);
+                    ast_val = builder->create_fcmp_le(l_val, si_fp);
+                } else  // both are float_type
+                    ast_val = builder->create_fcmp_le(l_val, r_val);
                 break;
             case OP_LT:
+                if (l_type->is_integer_type() && r_type->is_integer_type())
+                    ast_val = builder->create_icmp_lt(l_val, r_val);
+                else if (l_type->is_integer_type() && r_type->is_float_type()) {
+                    auto si_fp = builder->create_sitofp(l_val, l_type);
+                    ast_val = builder->create_fcmp_lt(si_fp, r_val);
+                } else if (l_type->is_float_type() &&
+                           r_type->is_integer_type()) {
+                    auto si_fp = builder->create_sitofp(r_val, r_type);
+                    ast_val = builder->create_fcmp_lt(l_val, si_fp);
+                } else  // both are float_type
+                    ast_val = builder->create_fcmp_lt(l_val, r_val);
                 break;
             case OP_GT:
+                if (l_type->is_integer_type() && r_type->is_integer_type())
+                    ast_val = builder->create_icmp_gt(l_val, r_val);
+                else if (l_type->is_integer_type() && r_type->is_float_type()) {
+                    auto si_fp = builder->create_sitofp(l_val, l_type);
+                    ast_val = builder->create_fcmp_gt(si_fp, r_val);
+                } else if (l_type->is_float_type() &&
+                           r_type->is_integer_type()) {
+                    auto si_fp = builder->create_sitofp(r_val, r_type);
+                    ast_val = builder->create_fcmp_gt(l_val, si_fp);
+                } else  // both are float_type
+                    ast_val = builder->create_fcmp_gt(l_val, r_val);
                 break;
             case OP_GE:
+                if (l_type->is_integer_type() && r_type->is_integer_type())
+                    ast_val = builder->create_icmp_ge(l_val, r_val);
+                else if (l_type->is_integer_type() && r_type->is_float_type()) {
+                    auto si_fp = builder->create_sitofp(l_val, l_type);
+                    ast_val = builder->create_fcmp_ge(si_fp, r_val);
+                } else if (l_type->is_float_type() &&
+                           r_type->is_integer_type()) {
+                    auto si_fp = builder->create_sitofp(r_val, r_type);
+                    ast_val = builder->create_fcmp_ge(l_val, si_fp);
+                } else  // both are float_type
+                    ast_val = builder->create_fcmp_ge(l_val, r_val);
                 break;
             case OP_EQ:
+                if (l_type->is_integer_type() && r_type->is_integer_type())
+                    ast_val = builder->create_icmp_eq(l_val, r_val);
+                else if (l_type->is_integer_type() && r_type->is_float_type()) {
+                    auto si_fp = builder->create_sitofp(l_val, l_type);
+                    ast_val = builder->create_fcmp_eq(si_fp, r_val);
+                } else if (l_type->is_float_type() &&
+                           r_type->is_integer_type()) {
+                    auto si_fp = builder->create_sitofp(r_val, r_type);
+                    ast_val = builder->create_fcmp_eq(l_val, si_fp);
+                } else  // both are float_type
+                    ast_val = builder->create_fcmp_eq(l_val, r_val);
                 break;
             case OP_NEQ:
+                if (l_type->is_integer_type() && r_type->is_integer_type())
+                    ast_val = builder->create_icmp_ne(l_val, r_val);
+                else if (l_type->is_integer_type() && r_type->is_float_type()) {
+                    auto si_fp = builder->create_sitofp(l_val, l_type);
+                    ast_val = builder->create_fcmp_ne(si_fp, r_val);
+                } else if (l_type->is_float_type() &&
+                           r_type->is_integer_type()) {
+                    auto si_fp = builder->create_sitofp(r_val, r_type);
+                    ast_val = builder->create_fcmp_ne(l_val, si_fp);
+                } else  // both are float_type
+                    ast_val = builder->create_fcmp_ne(l_val, r_val);
                 break;
         }
     }
+    DEBUG_INFO("visit simple expression over");
 }
 
 void CminusfBuilder::visit(ASTAdditiveExpression& node) {
+    DEBUG_INFO("visit additive expression");
     if (node.additive_expression == nullptr)
         node.term->accept(*this);
     else {
         node.additive_expression->accept(*this);
-        // TODO:
+        auto l_val = builder->create_load(ast_val);
         node.term->accept(*this);
-        // TODO:
+        auto r_val = builder->create_load(ast_val);
+        auto l_type = l_val->get_type();
+        auto r_type = r_val->get_type();
         switch (node.op) {
             case OP_PLUS:
-                /* code */
+                if (l_type->is_integer_type() && r_type->is_integer_type())
+                    ast_val = builder->create_iadd(l_val, r_val);
+                else if (l_type->is_integer_type() && r_type->is_float_type()) {
+                    auto si_fp = builder->create_sitofp(l_val, l_type);
+                    ast_val = builder->create_fadd(si_fp, r_val);
+                } else if (l_type->is_float_type() &&
+                           r_type->is_integer_type()) {
+                    auto si_fp = builder->create_sitofp(r_val, r_type);
+                    ast_val = builder->create_fadd(l_val, si_fp);
+                } else  // both are float_type
+                    ast_val = builder->create_fadd(l_val, r_val);
                 break;
             case OP_MINUS:
+                if (l_type->is_integer_type() && r_type->is_integer_type()) {
+                    ast_val = builder->create_isub(l_val, r_val);
+                } else if (l_type->is_integer_type() &&
+                           r_type->is_float_type()) {
+                    auto si_fp = builder->create_sitofp(l_val, l_type);
+                    ast_val = builder->create_fsub(si_fp, r_val);
+                } else if (l_type->is_float_type() &&
+                           r_type->is_integer_type()) {
+                    auto si_fp = builder->create_sitofp(r_val, r_type);
+                    ast_val = builder->create_fsub(l_val, si_fp);
+                } else  // both are float_type
+                    ast_val = builder->create_fsub(l_val, r_val);
                 break;
         }
     }
+    DEBUG_INFO("visit additive expression over");
 }
 
 void CminusfBuilder::visit(ASTTerm& node) {
+    DEBUG_INFO("visit term");
     if (node.term == nullptr)
         node.factor->accept(*this);
     else {
         node.term->accept(*this);
-        auto l_val = val;
+        auto l_val = builder->create_load(ast_val);
         node.factor->accept(*this);
-        auto r_val = val;
+        auto r_val = builder->create_load(ast_val);
+        auto l_type = l_val->get_type();
+        auto r_type = r_val->get_type();
         switch (node.op) {
             case OP_MUL:
-                if (l_val->get_type() == int32_type &&
-                    r_val->get_type() == int32_type)
-                    val = builder->create_imul(l_val, r_val);
-                else if (l_val->get_type() == int32_type &&
-                         r_val->get_type() == float_type) {
-                    FloatType* l_val_temp;  // TODO: type convert
-                } else                      // both are float_type
-                    val = builder->create_fmul(l_val, r_val);
+                if (l_type->is_integer_type() && r_type->is_integer_type()) {
+                    ast_val = builder->create_imul(l_val, r_val);
+                } else if (l_type->is_integer_type() &&
+                           r_type->is_float_type()) {
+                    auto si_fp = builder->create_sitofp(l_val, l_type);
+                    ast_val = builder->create_fmul(si_fp, r_val);
+                } else if (l_type->is_float_type() &&
+                           r_type->is_integer_type()) {
+                    auto si_fp = builder->create_sitofp(r_val, r_type);
+                    ast_val = builder->create_fmul(l_val, si_fp);
+                } else  // both are float_type
+                    ast_val = builder->create_fmul(l_val, r_val);
                 break;
             case OP_DIV:
-                if (l_val->get_type() == int32_type &&
-                    r_val->get_type() == int32_type)
-                    val = builder->create_isdiv(l_val, r_val);
-                else if (l_val->get_type() == int32_type &&
-                         r_val->get_type() == float_type) {
-                    FloatType* l_val_temp;  // TODO: type convert
-                } else                      // both are float_type
-                    val = builder->create_fdiv(l_val, r_val);
+                if (l_type->is_integer_type() && r_type->is_integer_type()) {
+                    ast_val = builder->create_isdiv(l_val, r_val);
+                } else if (l_type->is_integer_type() &&
+                           r_type->is_float_type()) {
+                    auto si_fp = builder->create_sitofp(l_val, l_type);
+                    ast_val = builder->create_fdiv(si_fp, r_val);
+                } else if (l_type->is_float_type() &&
+                           r_type->is_integer_type()) {
+                    auto si_fp = builder->create_sitofp(r_val, r_type);
+                    ast_val = builder->create_fdiv(l_val, si_fp);
+                } else  // both are float_type
+                    ast_val = builder->create_fdiv(l_val, r_val);
                 break;
         }
     }
+    DEBUG_INFO("visit term over");
 }
 
 void CminusfBuilder::visit(ASTCall& node) {
+    DEBUG_INFO("visit function call");
     auto* Func = scope.find(node.id);
     std::vector<Value*> arguments;
     for (auto& arg : node.args) {
         arg->accept(*this);
-        arguments.push_back(val);
+        arguments.push_back(ast_val);
     }
     // TODO: type conversion
-    val = builder->create_call(Func, arguments);
+    ast_val = builder->create_call(Func, arguments);
+    DEBUG_INFO("visit function call over");
 }
