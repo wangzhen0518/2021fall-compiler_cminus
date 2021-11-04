@@ -235,10 +235,11 @@ void CminusfBuilder::visit(ASTVar& node) {
     // as var is 'a' now
     if (node.expression != nullptr) {
         node.expression->accept(*this);
-        // TODO: type conversion
-
-        if (ast_val->get_type()->get_pointer_element_type()->is_float_type())
+        if (ast_val->get_type()->is_pointer_type())
+            ast_val = builder->create_load(ast_val);
+        if (ast_val->get_type()->is_float_type())
             ast_val = builder->create_fptosi(ast_val, var->get_type());
+        // TODO: check array index, it should not be less than 0
         auto gep = builder->create_gep(var, {CONST_INT(0), ast_val});
         var = builder->create_load(gep);
     }
