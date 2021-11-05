@@ -14,6 +14,7 @@
 #define CONST_INT(num) ConstantInt::get((int)num, module.get())
 #define CONST_ZERO(type) ConstantZero::get(type, module.get())
 
+#define int1_type Type::get_int1_type(module.get())
 #define int32_type Type::get_int32_type(module.get())
 #define float_type Type::get_float_type(module.get())
 #define void_type Type::get_void_type(module.get())
@@ -47,6 +48,56 @@ void judge_type(Type* t) {
         std::cout << "void type\n";
     else if (t->is_label_type())
         std::cout << "label type\n";
+}
+
+void type_convert(Value*& v, Type* target, std::unique_ptr<Module>& module,
+                  IRBuilder*& builder) {
+    auto type_ = v->get_type();
+    if (target == int32_type) {
+        if (type_ == float_type)
+            v = builder->create_fptosi(v, target);
+        else if (type_ == int1_type)
+            v = builder->create_zext(v, target);
+    }
+    if (target == float_type) {
+        if (type_ == int32_type)
+            v = builder->create_sitofp(v, target);
+        else if (type_ == int1_type) {
+            v = builder->create_zext(v, int32_type);
+            v = builder->create_sitofp(v, target);
+        }
+    }
+    // return target;
+}
+void type_convert(Value*& l, Value*& r, Type* target,
+                  std::unique_ptr<Module>& module, IRBuilder*& builder) {
+    auto l_type = l->get_type();
+    auto r_type = r->get_type();
+    if (target == int32_type) {
+        if (l_type == float_type)
+            l = builder->create_fptosi(l, target);
+        else if (l_type == int1_type)
+            l = builder->create_zext(l, target);
+        if (r_type == float_type)
+            r = builder->create_fptosi(r, target);
+        else if (r_type == int1_type)
+            r = builder->create_zext(r, target);
+    }
+    if (target == float_type) {
+        if (l_type == int32_type)
+            l = builder->create_sitofp(l, target);
+        else if (l_type == int1_type) {
+            l = builder->create_zext(l, int32_type);
+            l = builder->create_sitofp(l, target);
+        }
+        if (r_type == int32_type)
+            r = builder->create_sitofp(r, target);
+        else if (r_type == int1_type) {
+            r = builder->create_zext(r, int32_type);
+            r = builder->create_sitofp(r, target);
+        }
+    }
+    // return target;
 }
 
 void CminusfBuilder::visit(ASTProgram& node) {
@@ -214,7 +265,6 @@ void CminusfBuilder::visit(ASTParam& node) {
             param_ptr = builder->create_alloca(int32_ptr_type);
         else
             param_ptr = builder->create_alloca(float_ptr_type);
-
     } else {
         if (node.type == TYPE_INT)
             param_ptr = builder->create_alloca(int32_type);
@@ -322,29 +372,19 @@ void CminusfBuilder::visit(ASTReturnStmt& node) {
         if (return_type->is_void_type())
             builder->create_void_ret();
         else
-            ERROR("non-void function should return a value\n");
+            ERROR("void function should not return a value\n");
     } else {
         node.expression->accept(*this);
         if (ast_val->get_type()->is_pointer_type())
             ast_val = builder->create_load(ast_val);
-        if (return_type->is_integer_type()) {
-            if (ast_val->get_type()->is_float_type()) {
-                auto fp_si = builder->create_fptosi(ast_val, int32_type);
-                builder->create_store(fp_si, return_val);
-            } else
-                builder->create_store(ast_val, return_val);
-            auto retans = builder->create_load(return_val);
-            builder->create_ret(retans);
-        } else if (return_type->is_float_type()) {
-            if (ast_val->get_type()->is_integer_type()) {
-                auto si_fp = builder->create_sitofp(ast_val, int32_type);
-                builder->create_store(si_fp, return_val);
-            } else
-                builder->create_store(ast_val, return_val);
-            auto retans = builder->create_load(return_val);
-            builder->create_ret(retans);
-        } else
-            ERROR("void function should not return a value\n");
+        if (return_type->is_void_type())
+            ERROR("non-void function should return a value\n");
+        else {
+            type_convert(ast_val, return_type, module, builder);
+            builder->create_store(ast_val, return_val);
+            ast_val = builder->create_load(return_val);
+            builder->create_ret(ast_val);
+        }
     }
     DEBUG_INFO("visit return statement over");
 }
@@ -394,29 +434,15 @@ void CminusfBuilder::visit(ASTAssignExpression& node) {
         node.var->accept(*this);
         auto l_var = ast_val;
         node.expression->accept(*this);
-        DEBUG_OUTPUT;
         Value* r_var;
         if (ast_val->get_type()->is_pointer_type())
             r_var = builder->create_load(ast_val);
         else
             r_var = ast_val;
-        DEBUG_OUTPUT;
-        auto l_type = l_var->get_type()->get_pointer_element_type();
-        DEBUG_OUTPUT;
-        auto r_type = r_var->get_type();
-
-        if ((l_type->is_integer_type() && r_type->is_integer_type()) ||
-            (l_type->is_float_type() && r_type->is_float_type()))
-            // left and right are the same type
-            builder->create_store(r_var, l_var);
-        else if (l_type->is_integer_type() && r_type->is_float_type()) {
-            // left is integer, and right is float
-            auto fp_si = builder->create_fptosi(r_var, int32_type);
-            builder->create_store(fp_si, l_var);
-        } else {  // left is float, and right is integer
-            auto si_fp = builder->create_sitofp(r_var, float_type);
-            builder->create_store(si_fp, l_var);
-        }
+        type_convert(l_var, r_var,
+                     l_var->get_type()->get_pointer_element_type(), module,
+                     builder);
+        builder->create_store(r_var, l_var);
     }
     DEBUG_INFO("visit assignment expression over");
 }
@@ -437,89 +463,53 @@ void CminusfBuilder::visit(ASTSimpleExpression& node) {
             r_val = builder->create_load(ast_val);
         else
             r_val = ast_val;
-        auto l_type = l_val->get_type();
-        auto r_type = r_val->get_type();
+        Type* type_;
+        if (!l_val->get_type()->is_float_type() &&
+            !r_val->get_type()->is_float_type())
+            type_ = int32_type;
+        else
+            type_ = float_type;
+        type_convert(l_val, r_val, type_, module, builder);
         switch (node.op) {
             case OP_LE:
-                if (l_type->is_integer_type() && r_type->is_integer_type())
+                if (type_->is_integer_type())
                     ast_val = builder->create_icmp_le(l_val, r_val);
-                else if (l_type->is_integer_type() && r_type->is_float_type()) {
-                    auto si_fp = builder->create_sitofp(l_val, l_type);
-                    ast_val = builder->create_fcmp_le(si_fp, r_val);
-                } else if (l_type->is_float_type() &&
-                           r_type->is_integer_type()) {
-                    auto si_fp = builder->create_sitofp(r_val, r_type);
-                    ast_val = builder->create_fcmp_le(l_val, si_fp);
-                } else  // both are float_type
+                else
                     ast_val = builder->create_fcmp_le(l_val, r_val);
                 break;
             case OP_LT:
-                if (l_type->is_integer_type() && r_type->is_integer_type())
+                if (type_->is_integer_type())
                     ast_val = builder->create_icmp_lt(l_val, r_val);
-                else if (l_type->is_integer_type() && r_type->is_float_type()) {
-                    auto si_fp = builder->create_sitofp(l_val, l_type);
-                    ast_val = builder->create_fcmp_lt(si_fp, r_val);
-                } else if (l_type->is_float_type() &&
-                           r_type->is_integer_type()) {
-                    auto si_fp = builder->create_sitofp(r_val, r_type);
-                    ast_val = builder->create_fcmp_lt(l_val, si_fp);
-                } else  // both are float_type
+                else
                     ast_val = builder->create_fcmp_lt(l_val, r_val);
                 break;
             case OP_GT:
-                if (l_type->is_integer_type() && r_type->is_integer_type())
+                if (type_->is_integer_type())
                     ast_val = builder->create_icmp_gt(l_val, r_val);
-                else if (l_type->is_integer_type() && r_type->is_float_type()) {
-                    auto si_fp = builder->create_sitofp(l_val, l_type);
-                    ast_val = builder->create_fcmp_gt(si_fp, r_val);
-                } else if (l_type->is_float_type() &&
-                           r_type->is_integer_type()) {
-                    auto si_fp = builder->create_sitofp(r_val, r_type);
-                    ast_val = builder->create_fcmp_gt(l_val, si_fp);
-                } else  // both are float_type
+                else
                     ast_val = builder->create_fcmp_gt(l_val, r_val);
                 break;
             case OP_GE:
-                if (l_type->is_integer_type() && r_type->is_integer_type())
+                if (type_->is_integer_type())
                     ast_val = builder->create_icmp_ge(l_val, r_val);
-                else if (l_type->is_integer_type() && r_type->is_float_type()) {
-                    auto si_fp = builder->create_sitofp(l_val, l_type);
-                    ast_val = builder->create_fcmp_ge(si_fp, r_val);
-                } else if (l_type->is_float_type() &&
-                           r_type->is_integer_type()) {
-                    auto si_fp = builder->create_sitofp(r_val, r_type);
-                    ast_val = builder->create_fcmp_ge(l_val, si_fp);
-                } else  // both are float_type
+                else
                     ast_val = builder->create_fcmp_ge(l_val, r_val);
                 break;
             case OP_EQ:
-                if (l_type->is_integer_type() && r_type->is_integer_type())
+                if (type_->is_integer_type())
                     ast_val = builder->create_icmp_eq(l_val, r_val);
-                else if (l_type->is_integer_type() && r_type->is_float_type()) {
-                    auto si_fp = builder->create_sitofp(l_val, l_type);
-                    ast_val = builder->create_fcmp_eq(si_fp, r_val);
-                } else if (l_type->is_float_type() &&
-                           r_type->is_integer_type()) {
-                    auto si_fp = builder->create_sitofp(r_val, r_type);
-                    ast_val = builder->create_fcmp_eq(l_val, si_fp);
-                } else  // both are float_type
+                else
                     ast_val = builder->create_fcmp_eq(l_val, r_val);
                 break;
             case OP_NEQ:
-                if (l_type->is_integer_type() && r_type->is_integer_type())
+                if (type_->is_integer_type())
                     ast_val = builder->create_icmp_ne(l_val, r_val);
-                else if (l_type->is_integer_type() && r_type->is_float_type()) {
-                    auto si_fp = builder->create_sitofp(l_val, l_type);
-                    ast_val = builder->create_fcmp_ne(si_fp, r_val);
-                } else if (l_type->is_float_type() &&
-                           r_type->is_integer_type()) {
-                    auto si_fp = builder->create_sitofp(r_val, r_type);
-                    ast_val = builder->create_fcmp_ne(l_val, si_fp);
-                } else  // both are float_type
+                else
                     ast_val = builder->create_fcmp_ne(l_val, r_val);
                 break;
         }
     }
+    judge_type(ast_val->get_type());
     DEBUG_INFO("visit simple expression over");
 }
 
@@ -539,34 +529,24 @@ void CminusfBuilder::visit(ASTAdditiveExpression& node) {
             r_val = builder->create_load(ast_val);
         else
             r_val = ast_val;
-        auto l_type = l_val->get_type();
-        auto r_type = r_val->get_type();
+        Type* type_;
+        if (!l_val->get_type()->is_float_type() &&
+            !r_val->get_type()->is_float_type())
+            type_ = int32_type;
+        else
+            type_ = float_type;
+        type_convert(l_val, r_val, type_, module, builder);
         switch (node.op) {
             case OP_PLUS:
-                if (l_type->is_integer_type() && r_type->is_integer_type())
+                if (type_->is_integer_type())
                     ast_val = builder->create_iadd(l_val, r_val);
-                else if (l_type->is_integer_type() && r_type->is_float_type()) {
-                    auto si_fp = builder->create_sitofp(l_val, l_type);
-                    ast_val = builder->create_fadd(si_fp, r_val);
-                } else if (l_type->is_float_type() &&
-                           r_type->is_integer_type()) {
-                    auto si_fp = builder->create_sitofp(r_val, r_type);
-                    ast_val = builder->create_fadd(l_val, si_fp);
-                } else  // both are float_type
+                else
                     ast_val = builder->create_fadd(l_val, r_val);
                 break;
             case OP_MINUS:
-                if (l_type->is_integer_type() && r_type->is_integer_type()) {
+                if (type_->is_integer_type())
                     ast_val = builder->create_isub(l_val, r_val);
-                } else if (l_type->is_integer_type() &&
-                           r_type->is_float_type()) {
-                    auto si_fp = builder->create_sitofp(l_val, l_type);
-                    ast_val = builder->create_fsub(si_fp, r_val);
-                } else if (l_type->is_float_type() &&
-                           r_type->is_integer_type()) {
-                    auto si_fp = builder->create_sitofp(r_val, r_type);
-                    ast_val = builder->create_fsub(l_val, si_fp);
-                } else  // both are float_type
+                else
                     ast_val = builder->create_fsub(l_val, r_val);
                 break;
         }
@@ -590,35 +570,24 @@ void CminusfBuilder::visit(ASTTerm& node) {
             r_val = builder->create_load(ast_val);
         else
             r_val = ast_val;
-        auto l_type = l_val->get_type();
-        auto r_type = r_val->get_type();
+        Type* type_;
+        if (!l_val->get_type()->is_float_type() &&
+            !r_val->get_type()->is_float_type())
+            type_ = int32_type;
+        else
+            type_ = float_type;
+        type_convert(l_val, r_val, type_, module, builder);
         switch (node.op) {
             case OP_MUL:
-                if (l_type->is_integer_type() && r_type->is_integer_type()) {
+                if (type_->is_integer_type())
                     ast_val = builder->create_imul(l_val, r_val);
-                } else if (l_type->is_integer_type() &&
-                           r_type->is_float_type()) {
-                    auto si_fp = builder->create_sitofp(l_val, l_type);
-                    ast_val = builder->create_fmul(si_fp, r_val);
-                } else if (l_type->is_float_type() &&
-                           r_type->is_integer_type()) {
-                    auto si_fp = builder->create_sitofp(r_val, r_type);
-                    ast_val = builder->create_fmul(l_val, si_fp);
-                } else  // both are float_type
+                else
                     ast_val = builder->create_fmul(l_val, r_val);
                 break;
             case OP_DIV:
-                if (l_type->is_integer_type() && r_type->is_integer_type()) {
+                if (type_->is_integer_type())
                     ast_val = builder->create_isdiv(l_val, r_val);
-                } else if (l_type->is_integer_type() &&
-                           r_type->is_float_type()) {
-                    auto si_fp = builder->create_sitofp(l_val, l_type);
-                    ast_val = builder->create_fdiv(si_fp, r_val);
-                } else if (l_type->is_float_type() &&
-                           r_type->is_integer_type()) {
-                    auto si_fp = builder->create_sitofp(r_val, r_type);
-                    ast_val = builder->create_fdiv(l_val, si_fp);
-                } else  // both are float_type
+                else
                     ast_val = builder->create_fdiv(l_val, r_val);
                 break;
         }
@@ -652,17 +621,7 @@ void CminusfBuilder::visit(ASTCall& node) {
             param->accept(*this);
             if (ast_val->get_type()->is_pointer_type())
                 ast_val = builder->create_load(ast_val);
-            // type conversion
-            auto param_type = ast_val->get_type();
-            auto arg_type = (*arg)->get_type();
-            // if arg and param are the same type
-            // do not need to do anything
-            // if arg is integer, and param is float
-            if (arg_type->is_integer_type() && param_type->is_float_type())
-                ast_val = builder->create_fptosi(ast_val, int32_type);
-            else if (arg_type->is_float_type() && param_type->is_integer_type())
-                ast_val = builder->create_sitofp(ast_val, float_type);
-
+            type_convert(ast_val, (*arg)->get_type(), module, builder);
             parameters.push_back(ast_val);
             arg++;
         }
