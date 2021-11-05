@@ -236,15 +236,124 @@ void CminusfBuilder::visit(ASTCompoundStmt& node) {
 }
 
 void CminusfBuilder::visit(ASTExpressionStmt& node) {
+    DEBUG_INFO("visit expression statement");
     if (node.expression != nullptr)
         node.expression->accept(*this);
+    DEBUG_INFO("visit expression statement over");
 }
 
-void CminusfBuilder::visit(ASTSelectionStmt& node) {}
+void CminusfBuilder::visit(ASTSelectionStmt& node) {
+    DEBUG_INFO("visit selection statement");
+    if (node.expression != nullptr) {
+        node.expression->accept(*this);
+        if (node.else_statement != nullptr) {
+            auto truebb =
+                BasicBlock::create(module.get(), "true", current_func);
+            auto falsebb =
+                BasicBlock::create(module.get(), "false", current_func);
+            auto retbb = BasicBlock::create(module.get(), "ret", current_func);
+            if (ast_val->get_type()->is_integer_type()) {
+                auto cmp = builder->create_icmp_ne(ast_val, {CONST_INT(0)});
+                builder->create_cond_br(cmp, truebb, falsebb);
+            } else {
+                auto cmp = builder->create_fcmp_ne(ast_val, {CONST_FP(0.0)});
+                builder->create_cond_br(cmp, truebb, falsebb);
+            }
+            // true
+            builder->set_insert_point(truebb);
+            node.if_statement->accept(*this);
+            builder->create_br(retbb);
+            // false
+            builder->set_insert_point(falsebb);
+            node.else_statement->accept(*this);
+            builder->create_br(retbb);
+            // ret
+            builder->set_insert_point(retbb);
+        } else {
+            auto truebb =
+                BasicBlock::create(module.get(), "true", current_func);
+            auto retbb = BasicBlock::create(module.get(), "ret", current_func);
+            if (ast_val->get_type()->is_integer_type()) {
+                auto cmp = builder->create_icmp_ne(ast_val, {CONST_INT(0)});
+                builder->create_cond_br(cmp, truebb, retbb);
+            } else {
+                auto cmp = builder->create_fcmp_ne(ast_val, {CONST_FP(0.0)});
+                builder->create_cond_br(cmp, truebb, retbb);
+            }
+            // true
+            builder->set_insert_point(truebb);
+            node.if_statement->accept(*this);
+            builder->create_br(retbb);
+            // ret
+            builder->set_insert_point(retbb);
+        }
+    }
+    DEBUG_INFO("visit selection statement over");
+}
 
-void CminusfBuilder::visit(ASTIterationStmt& node) {}
+void CminusfBuilder::visit(ASTIterationStmt& node) {
+    DEBUG_INFO("visit iteration statement");
+    if (node.expression != nullptr && node.statement != nullptr) {
+        node.expression->accept(*this);
+        auto cmpbb = BasicBlock::create(module.get(), "cmp", current_func);
+        auto circlebb =
+            BasicBlock::create(module.get(), "circle", current_func);
+        auto retbb = BasicBlock::create(module.get(), "ret", current_func);
+        // cmp
+        builder->set_insert_point(cmpbb);
+        if (ast_val->get_type()->is_integer_type()) {
+            auto cmp = builder->create_icmp_ne(ast_val, {CONST_INT(0)});
+            builder->create_cond_br(cmp, circlebb, retbb);
+        } else {
+            auto cmp = builder->create_fcmp_ne(ast_val, {CONST_FP(0.0)});
+            builder->create_cond_br(cmp, circlebb, retbb);
+        }
+        // circle
+        builder->set_insert_point(circlebb);
+        node.statement->accept(*this);
+        builder->create_br(cmpbb);
+        // retbb
+        builder->set_insert_point(retbb);
+    }
+    DEBUG_INFO("visit iteration statement over");
+}
 
-void CminusfBuilder::visit(ASTReturnStmt& node) {}
+void CminusfBuilder::visit(ASTReturnStmt& node) {
+    DEBUG_INFO("visit return statement");
+    if (node.expression == nullptr) {
+        if (return_val->get_alloca_type() == int32_type) {
+            builder->create_store({CONST_INT(0)}, return_val);
+            auto retans = builder->create_load(return_val);
+            builder->create_ret(retans);
+        } else if (return_val->get_alloca_type() == float_type) {
+            builder->create_store({CONST_FP(0.0)}, return_val);
+            auto retans = builder->create_load(return_val);
+            builder->create_ret(retans);
+        } else
+            builder->create_ret(nullptr);
+    } else {
+        node.expression->accept(*this);
+        if (return_val->get_alloca_type() == int32_type) {
+            if (ast_val->get_type()->is_float_type()) {
+                auto fp_si = builder->create_fptosi(ast_val, int32_type);
+                builder->create_store(fp_si, return_val);
+            } else
+                builder->create_store(ast_val, return_val);
+            auto retans = builder->create_load(return_val);
+            builder->create_ret(retans);
+        } else if (return_val->get_alloca_type() == float_type) {
+            if (ast_val->get_type()->is_integer_type()) {
+                auto si_fp = builder->create_sitofp(ast_val, int32_type);
+                builder->create_store(si_fp, return_val);
+            } else
+                builder->create_store(ast_val, return_val);
+            auto retans = builder->create_load(return_val);
+            builder->create_ret(retans);
+        } else
+            ERROR("wrong return");
+    }
+    DEBUG_INFO("visit return statement over");
+}
 
 void CminusfBuilder::visit(ASTVar& node) {
     DEBUG_INFO("visit variable");
