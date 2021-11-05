@@ -26,8 +26,24 @@ CminusType ast_num_type;
 // Constant* ast_num_val;
 Function* main_fun;
 AllocaInst* return_val;
-Value* ast_val;  // value of function call, expression, etc
-// Value* var;  // the variable to be assigned
+Value* ast_val;  // value of function call, expression, et
+
+void judge_type(Type* t) {
+    if (t->is_array_type())
+        std::cout << "array type\n";
+    else if (t->is_function_type())
+        std::cout << "function type\n";
+    else if (t->is_float_type())
+        std::cout << "float type\n";
+    else if (t->is_integer_type())
+        std::cout << "integer type\n";
+    else if (t->is_pointer_type())
+        std::cout << "pointer type\n";
+    else if (t->is_void_type())
+        std::cout << "void type\n";
+    else if (t->is_label_type())
+        std::cout << "label type\n";
+}
 
 void CminusfBuilder::visit(ASTProgram& node) {
     for (auto& decl : node.declarations)
@@ -238,12 +254,10 @@ void CminusfBuilder::visit(ASTVar& node) {
         if (ast_val->get_type()->is_pointer_type())
             ast_val = builder->create_load(ast_val);
         if (ast_val->get_type()->is_float_type())
-            ast_val = builder->create_fptosi(ast_val, var->get_type());
+            ast_val = builder->create_fptosi(ast_val, int32_type);
         // TODO: check array index, it should not be less than 0
-        auto gep = builder->create_gep(var, {CONST_INT(0), ast_val});
-        var = builder->create_load(gep);
+        var = builder->create_gep(var, {CONST_INT(0), ast_val});
     }
-
     // else var is 'a', it is enough
     ast_val = var;
     DEBUG_INFO("visit variable over");
@@ -275,10 +289,10 @@ void CminusfBuilder::visit(ASTAssignExpression& node) {
             builder->create_store(r_var, l_var);
         else if (l_type->is_integer_type() && r_type->is_float_type()) {
             // left is integer, and right is float
-            auto fp_si = builder->create_fptosi(r_var, r_type);
+            auto fp_si = builder->create_fptosi(r_var, int32_type);
             builder->create_store(fp_si, l_var);
         } else {  // left is float, and right is integer
-            auto si_fp = builder->create_sitofp(r_var, r_type);
+            auto si_fp = builder->create_sitofp(r_var, float_type);
             builder->create_store(si_fp, l_var);
         }
     }
@@ -290,10 +304,17 @@ void CminusfBuilder::visit(ASTSimpleExpression& node) {
     if (node.additive_expression_r == nullptr)
         node.additive_expression_l->accept(*this);
     else {
+        Value *l_val, *r_val;
         node.additive_expression_l->accept(*this);
-        auto l_val = builder->create_load(ast_val);
+        if (ast_val->get_type()->is_pointer_type())
+            l_val = builder->create_load(ast_val);
+        else
+            l_val = ast_val;
         node.additive_expression_r->accept(*this);
-        auto r_val = builder->create_load(ast_val);
+        if (ast_val->get_type()->is_pointer_type())
+            r_val = builder->create_load(ast_val);
+        else
+            r_val = ast_val;
         auto l_type = l_val->get_type();
         auto r_type = r_val->get_type();
         switch (node.op) {
@@ -385,10 +406,17 @@ void CminusfBuilder::visit(ASTAdditiveExpression& node) {
     if (node.additive_expression == nullptr)
         node.term->accept(*this);
     else {
+        Value *l_val, *r_val;
         node.additive_expression->accept(*this);
-        auto l_val = builder->create_load(ast_val);
+        if (ast_val->get_type()->is_pointer_type())
+            l_val = builder->create_load(ast_val);
+        else
+            l_val = ast_val;
         node.term->accept(*this);
-        auto r_val = builder->create_load(ast_val);
+        if (ast_val->get_type()->is_pointer_type())
+            r_val = builder->create_load(ast_val);
+        else
+            r_val = ast_val;
         auto l_type = l_val->get_type();
         auto r_type = r_val->get_type();
         switch (node.op) {
@@ -429,10 +457,17 @@ void CminusfBuilder::visit(ASTTerm& node) {
     if (node.term == nullptr)
         node.factor->accept(*this);
     else {
+        Value *l_val, *r_val;
         node.term->accept(*this);
-        auto l_val = builder->create_load(ast_val);
+        if (ast_val->get_type()->is_pointer_type())
+            l_val = builder->create_load(ast_val);
+        else
+            l_val = ast_val;
         node.factor->accept(*this);
-        auto r_val = builder->create_load(ast_val);
+        if (ast_val->get_type()->is_pointer_type())
+            r_val = builder->create_load(ast_val);
+        else
+            r_val = ast_val;
         auto l_type = l_val->get_type();
         auto r_type = r_val->get_type();
         switch (node.op) {
@@ -471,13 +506,45 @@ void CminusfBuilder::visit(ASTTerm& node) {
 
 void CminusfBuilder::visit(ASTCall& node) {
     DEBUG_INFO("visit function call");
-    auto* Func = scope.find(node.id);
-    std::vector<Value*> arguments;
-    for (auto& arg : node.args) {
-        arg->accept(*this);
-        arguments.push_back(ast_val);
+    Function* func = dynamic_cast<Function*>(scope.find(node.id));
+    if (typeid(func) == typeid(Function*))
+        std::cout << "convert succeed\n";
+    else if (typeid(func) == typeid(Value*))
+        std::cout << "convert fail\n";
+    if (func == nullptr) {
+        ERROR("it is not a function\n");
+        builder->create_call(Function::create(FunctionType::get(void_type, {}),
+                                              "neg_idx_except", module.get()),
+                             {});
+        return;
     }
-    // TODO: type conversion
-    ast_val = builder->create_call(Func, arguments);
+    auto argu_list = func->get_args();
+    if (argu_list.size() > node.args.size())
+        ERROR("too few arguments in function call\n");
+    else if (argu_list.size() < node.args.size())
+        ERROR("too many arguments in function call\n");
+    else {
+        std::vector<Value*> parameters;
+        auto arg = argu_list.begin();
+        for (auto& param : node.args) {
+            param->accept(*this);
+            if (ast_val->get_type()->is_pointer_type())
+                ast_val = builder->create_load(ast_val);
+            // type conversion
+            auto param_type = ast_val->get_type();
+            auto arg_type = (*arg)->get_type();
+            // if arg and param are the same type
+            // do not need to do anything
+            // if arg is integer, and param is float
+            if (arg_type->is_integer_type() && param_type->is_float_type())
+                ast_val = builder->create_fptosi(ast_val, int32_type);
+            else if (arg_type->is_float_type() && param_type->is_integer_type())
+                ast_val = builder->create_sitofp(ast_val, float_type);
+
+            parameters.push_back(ast_val);
+            arg++;
+        }
+        ast_val = builder->create_call(func, parameters);
+    }
     DEBUG_INFO("visit function call over");
 }
