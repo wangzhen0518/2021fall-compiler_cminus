@@ -6,7 +6,6 @@
 #define DEBUG_INFO(S) std::cout << S << std::endl
 #else
 #define DEBUG_OUTPUT
-#define DEBUG_INFO(S)
 #endif
 
 #define ERROR(comment) std::cout << comment << std::endl
@@ -434,18 +433,10 @@ void CminusfBuilder::visit(ASTVar& node) {
         builder->create_br(falseBB);
         // false basic block
         builder->set_insert_point(falseBB);
-        judge_type(var->get_type());
-        bool arg_flag = false;
-        const std::string& var_name = var->get_name();
-        for (auto& arg : current_func->get_args())
-            if (var_name == arg->get_name())
-                arg_flag = true;
-        if (arg_flag) {
-            DEBUG_INFO("arg");
+        if (builder->create_load(var)->get_type()->is_pointer_type()) {
             var = builder->create_load(var);
             var = builder->create_gep(var, {ast_val});
         } else {
-            DEBUG_INFO("not arg");
             var = builder->create_gep(var, {CONST_INT(0), ast_val});
         }
     }
@@ -644,13 +635,15 @@ void CminusfBuilder::visit(ASTCall& node) {
         auto arg = argu_list.begin();
         for (auto& param : node.args) {
             param->accept(*this);
-            if (ast_val->get_type()
-                    ->get_pointer_element_type()
-                    ->is_pointer_type())
-                ast_val =
-                    builder->create_gep(ast_val, {CONST_INT(0), CONST_INT(0)});
-            else if (ast_val->get_type()->is_pointer_type())
-                ast_val = builder->create_load(ast_val);
+            if (ast_val->get_type()->is_pointer_type())
+                if (builder->create_load(ast_val)
+                        ->get_type()
+                        ->is_array_type()) {
+                    ast_val = builder->create_gep(ast_val,
+                                                  {CONST_INT(0), CONST_INT(0)});
+                } else {
+                    ast_val = builder->create_load(ast_val);
+                }
             type_convert(ast_val, (*arg)->get_type(), module, builder);
             parameters.push_back(ast_val);
             arg++;
