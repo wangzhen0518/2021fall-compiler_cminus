@@ -396,8 +396,6 @@ void CminusfBuilder::visit(ASTReturnStmt& node) {
             ERROR("non-void function should return a value\n");
         else {
             type_convert(ast_val, return_type, module, builder);
-            builder->create_store(ast_val, return_val);
-            ast_val = builder->create_load(return_val);
             builder->create_ret(ast_val);
         }
     }
