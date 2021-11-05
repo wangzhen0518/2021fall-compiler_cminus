@@ -189,6 +189,8 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
         return_val = builder->create_alloca(int32_type);
     else if (node.type == TYPE_FLOAT)
         return_val = builder->create_alloca(float_type);
+    else if (node.type == TYPE_VOID)
+        return_val = builder->create_alloca(void_type);
 
     if (node.params.size() != 0 && node.params[0]->type != TYPE_VOID) {
         for (auto param : node.params) {
@@ -329,8 +331,9 @@ void CminusfBuilder::visit(ASTReturnStmt& node) {
             builder->create_store({CONST_FP(0.0)}, return_val);
             auto retans = builder->create_load(return_val);
             builder->create_ret(retans);
-        } else
-            builder->create_ret(nullptr);
+        } else {
+            builder->create_void_ret();
+        }
     } else {
         node.expression->accept(*this);
         if (return_val->get_alloca_type() == int32_type) {
