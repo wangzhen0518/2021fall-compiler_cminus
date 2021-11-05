@@ -21,10 +21,9 @@
 #define int32_ptr_type Type::get_int32_ptr_type(module.get())
 #define float_ptr_type Type::get_float_ptr_type(module.get())
 
-#define MAX_INDEX 10'000'000
+#define MAX_COUNT 10'000'000
 
-int index_count;
-int select_count;
+int count;
 int ast_num_i;
 float ast_num_f;
 CminusType ast_num_type;
@@ -68,7 +67,6 @@ void type_convert(Value*& v, Type* target, std::unique_ptr<Module>& module,
             v = builder->create_sitofp(v, target);
         }
     }
-    // return target;
 }
 void type_convert(Value*& l, Value*& r, Type* target,
                   std::unique_ptr<Module>& module, IRBuilder*& builder) {
@@ -98,7 +96,6 @@ void type_convert(Value*& l, Value*& r, Type* target,
             r = builder->create_sitofp(r, target);
         }
     }
-    // return target;
 }
 
 void CminusfBuilder::visit(ASTProgram& node) {
@@ -297,15 +294,12 @@ void CminusfBuilder::visit(ASTSelectionStmt& node) {
         node.expression->accept(*this);
         if (node.else_statement != nullptr) {
             auto truebb = BasicBlock::create(
-                module.get(), "true" + std::to_string(select_count),
-                current_func);
+                module.get(), "true" + std::to_string(count), current_func);
             auto falsebb = BasicBlock::create(
-                module.get(), "false" + std::to_string(select_count),
-                current_func);
-            auto retbb = BasicBlock::create(
-                module.get(), "ret" + std::to_string(select_count),
-                current_func);
-            select_count = (select_count + 1) % MAX_INDEX;
+                module.get(), "false" + std::to_string(count), current_func);
+            auto exitbb = BasicBlock::create(
+                module.get(), "ret" + std::to_string(count), current_func);
+            count = (count + 1) % MAX_COUNT;
             if (ast_val->get_type()->is_integer_type()) {
                 if (ast_val->get_type() == Type::get_int1_type(module.get())) {
                     ast_val = builder->create_zext(ast_val, int32_type);
@@ -319,21 +313,19 @@ void CminusfBuilder::visit(ASTSelectionStmt& node) {
             // true
             builder->set_insert_point(truebb);
             node.if_statement->accept(*this);
-            builder->create_br(retbb);
+            builder->create_br(exitbb);
             // false
             builder->set_insert_point(falsebb);
             node.else_statement->accept(*this);
-            builder->create_br(retbb);
+            builder->create_br(exitbb);
             // ret
-            builder->set_insert_point(retbb);
+            builder->set_insert_point(exitbb);
         } else {
             auto truebb = BasicBlock::create(
-                module.get(), "true" + std::to_string(select_count),
-                current_func);
-            auto retbb = BasicBlock::create(
-                module.get(), "ret" + std::to_string(select_count),
-                current_func);
-            select_count = (select_count + 1) % MAX_INDEX;
+                module.get(), "true" + std::to_string(count), current_func);
+            auto exitbb = BasicBlock::create(
+                module.get(), "ret" + std::to_string(count), current_func);
+            count = (count + 1) % MAX_COUNT;
             if (ast_val->get_type()->is_pointer_type()) {
                 ast_val = builder->create_load(ast_val);
             }
@@ -342,17 +334,17 @@ void CminusfBuilder::visit(ASTSelectionStmt& node) {
                     ast_val = builder->create_zext(ast_val, int32_type);
                 }
                 auto cmp = builder->create_icmp_ne(ast_val, CONST_INT(0));
-                builder->create_cond_br(cmp, truebb, retbb);
+                builder->create_cond_br(cmp, truebb, exitbb);
             } else {
                 auto cmp = builder->create_fcmp_ne(ast_val, CONST_FP(0.0));
-                builder->create_cond_br(cmp, truebb, retbb);
+                builder->create_cond_br(cmp, truebb, exitbb);
             }
             // true
             builder->set_insert_point(truebb);
             node.if_statement->accept(*this);
-            builder->create_br(retbb);
+            builder->create_br(exitbb);
             // ret
-            builder->set_insert_point(retbb);
+            builder->set_insert_point(exitbb);
         }
     }
     DEBUG_INFO("visit selection statement over");
@@ -361,26 +353,36 @@ void CminusfBuilder::visit(ASTSelectionStmt& node) {
 void CminusfBuilder::visit(ASTIterationStmt& node) {
     DEBUG_INFO("visit iteration statement");
     if (node.expression != nullptr && node.statement != nullptr) {
-        node.expression->accept(*this);
-        auto cmpbb = BasicBlock::create(module.get(), "cmp", current_func);
-        auto circlebb =
-            BasicBlock::create(module.get(), "circle", current_func);
-        auto retbb = BasicBlock::create(module.get(), "ret", current_func);
+        auto cmpbb = BasicBlock::create(
+            module.get(), "cmp_" + std::to_string(count), current_func);
+        auto circlebb = BasicBlock::create(
+            module.get(), "circle_" + std::to_string(count), current_func);
+        auto exitbb = BasicBlock::create(
+            module.get(), "ret_" + std::to_string(count), current_func);
+        count = (count + 1) % MAX_COUNT;
+        builder->create_br(cmpbb);
         // cmp
         builder->set_insert_point(cmpbb);
-        if (ast_val->get_type()->is_integer_type()) {
-            auto cmp = builder->create_icmp_ne(ast_val, {CONST_INT(0)});
-            builder->create_cond_br(cmp, circlebb, retbb);
+        scope.enter();
+        node.expression->accept(*this);
+        if (ast_val->get_type()->is_pointer_type())
+            ast_val = builder->create_load(ast_val);
+        if (ast_val->get_type() == int1_type)
+            builder->create_cond_br(ast_val, circlebb, exitbb);
+        else if (ast_val->get_type()->is_integer_type()) {
+            ast_val = builder->create_icmp_ne(ast_val, {CONST_INT(0)});
+            builder->create_cond_br(ast_val, circlebb, exitbb);
         } else {
-            auto cmp = builder->create_fcmp_ne(ast_val, {CONST_FP(0.0)});
-            builder->create_cond_br(cmp, circlebb, retbb);
+            ast_val = builder->create_fcmp_ne(ast_val, {CONST_FP(0.0)});
+            builder->create_cond_br(ast_val, circlebb, exitbb);
         }
         // circle
         builder->set_insert_point(circlebb);
         node.statement->accept(*this);
         builder->create_br(cmpbb);
-        // retbb
-        builder->set_insert_point(retbb);
+        // exitbb
+        builder->set_insert_point(exitbb);
+        scope.exit();
     }
     DEBUG_INFO("visit iteration statement over");
 }
@@ -419,8 +421,8 @@ void CminusfBuilder::visit(ASTVar& node) {
             ast_val = builder->create_fptosi(ast_val, int32_type);
         auto icmp = builder->create_icmp_lt(ast_val, CONST_INT(0));
         // check the index
-        std::string label_name = node.id + std::to_string(index_count);
-        index_count = (index_count + 1) % MAX_INDEX;
+        std::string label_name = node.id + std::to_string(count);
+        count = (count + 1) % MAX_COUNT;
         auto trueBB = BasicBlock::create(module.get(), label_name + "_true",
                                          current_func);
         auto falseBB = BasicBlock::create(module.get(), label_name + "_false",
