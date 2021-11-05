@@ -239,27 +239,26 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
 
     if (node.type == TYPE_INT)
         return_val = builder->create_alloca(int32_type);
-    else if (node.type == TYPE_FLOAT) {
+    else if (node.type == TYPE_FLOAT)
         return_val = builder->create_alloca(float_type);
-        if (node.params.size() != 0 && node.params[0]->type != TYPE_VOID) {
-            for (auto param : node.params) {
-                if (param->type == TYPE_VOID)
-                    ERROR(
-                        "A parameter in parameter list cannot be void type\n");
-                else
-                    param->accept(*this);
-            }
+    if (node.params.size() != 0 && node.params[0]->type != TYPE_VOID) {
+        for (auto param : node.params) {
+            if (param->type == TYPE_VOID)
+                ERROR("A parameter in parameter list cannot be void type\n");
+            else
+                param->accept(*this);
         }
-        std::vector<Value*> args;
-        for (auto arg = func->arg_begin(); arg != func->arg_end(); arg++)
-            args.push_back(*arg);
-        for (int i = 0; i < node.params.size(); i++)
-            builder->create_store(args[i], scope.find(node.params[i]->id));
-        node.compound_stmt->accept(*this);
-        scope.exit();
-        DEBUG_INFO("visit function declaration over");
     }
+    std::vector<Value*> args;
+    for (auto arg = func->arg_begin(); arg != func->arg_end(); arg++)
+        args.push_back(*arg);
+    for (int i = 0; i < node.params.size(); i++)
+        builder->create_store(args[i], scope.find(node.params[i]->id));
+    node.compound_stmt->accept(*this);
+    scope.exit();
+    DEBUG_INFO("visit function declaration over");
 }
+
 void CminusfBuilder::visit(ASTParam& node) {
     Value* param_ptr;
     if (node.isarray) {
