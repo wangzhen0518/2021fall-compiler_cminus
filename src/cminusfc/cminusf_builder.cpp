@@ -396,8 +396,6 @@ void CminusfBuilder::visit(ASTReturnStmt& node) {
             ERROR("non-void function should return a value\n");
         else {
             type_convert(ast_val, return_type, module, builder);
-            builder->create_store(ast_val, return_val);
-            ast_val = builder->create_load(return_val);
             builder->create_ret(ast_val);
         }
     }
@@ -427,9 +425,7 @@ void CminusfBuilder::visit(ASTVar& node) {
         // true basic block
         // index is less than 0, exit
         builder->set_insert_point(trueBB);
-        builder->create_call(Function::create(FunctionType::get(void_type, {}),
-                                              "neg_idx_except", module.get()),
-                             {});
+        builder->create_call(scope.find("neg_idx_except"), {});
         builder->create_br(falseBB);
         // false basic block
         builder->set_insert_point(falseBB);
