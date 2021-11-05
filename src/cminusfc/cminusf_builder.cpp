@@ -1,5 +1,6 @@
 #include "cminusf_builder.hpp"
 
+#define DEBUG
 #ifdef DEBUG  // 用于调试信息,大家可以在编译过程中通过" -DDEBUG"来开启这一选项
 #define DEBUG_OUTPUT std::cout << __LINE__ << std::endl  // 输出行号的简单示例
 #define DEBUG_INFO(S) std::cout << S << std::endl
@@ -8,7 +9,7 @@
 #define DEBUG_INFO(S)
 #endif
 
-#define ERROR(comment) std::cout << comment
+#define ERROR(comment) std::cout << comment << std::endl
 
 #define CONST_FP(num) ConstantFP::get((float)num, module.get())
 #define CONST_INT(num) ConstantInt::get((int)num, module.get())
@@ -29,7 +30,7 @@ float ast_num_f;
 CminusType ast_num_type;
 // Constant* ast_num_val;
 Function* current_func;
-AllocaInst* return_val;
+// AllocaInst* return_val;
 Type* return_type;
 Value* ast_val;  // value of function call, expression, et
 
@@ -132,12 +133,12 @@ void CminusfBuilder::visit(ASTVarDeclaration& node) {
                                            false, CONST_ZERO(float_type));
                 scope.push(node.id, val);
             } else
-                ERROR("Cannot define a variable of void type\n");
+                ERROR("Cannot define a variable of void type");
         } else {  // array
             if (node.type == TYPE_INT) {
                 node.num->accept(*this);
                 if (ast_num_i <= 0)
-                    ERROR("number of an array members cannot be less than 1\n");
+                    ERROR("number of an array members cannot be less than 1");
                 else {
                     auto* arrayType = ArrayType::get(int32_type, ast_num_i);
                     Value* val =
@@ -148,7 +149,7 @@ void CminusfBuilder::visit(ASTVarDeclaration& node) {
             } else if (node.type == TYPE_FLOAT) {
                 node.num->accept(*this);
                 if (ast_num_i <= 0)
-                    ERROR("number of an array members cannot be less than 1\n");
+                    ERROR("number of an array members cannot be less than 1");
                 else {
                     auto* arrayType = ArrayType::get(float_type, ast_num_i);
                     Value* val =
@@ -157,7 +158,7 @@ void CminusfBuilder::visit(ASTVarDeclaration& node) {
                     scope.push(node.id, val);
                 }
             } else
-                ERROR("Cannot define a variable of void type\n");
+                ERROR("Cannot define a variable of void type");
         }
     } else {
         if (node.num == nullptr) {
@@ -168,12 +169,12 @@ void CminusfBuilder::visit(ASTVarDeclaration& node) {
                 Value* val = builder->create_alloca(float_type);
                 scope.push(node.id, val);
             } else
-                ERROR("Cannot define a variable of void type\n");
+                ERROR("Cannot define a variable of void type");
         } else {
             if (node.type == TYPE_INT) {
                 node.num->accept(*this);
                 if (ast_num_i <= 0)
-                    ERROR("number of an array members cannot be less than 1\n");
+                    ERROR("number of an array members cannot be less than 1");
                 else {
                     auto* arrayType = ArrayType::get(int32_type, ast_num_i);
                     Value* val = builder->create_alloca(arrayType);
@@ -182,14 +183,14 @@ void CminusfBuilder::visit(ASTVarDeclaration& node) {
             } else if (node.type == TYPE_FLOAT) {
                 node.num->accept(*this);
                 if (ast_num_i <= 0)
-                    ERROR("number of an array members cannot be less than 1\n");
+                    ERROR("number of an array members cannot be less than 1");
                 else {
                     auto* arrayType = ArrayType::get(float_type, ast_num_i);
                     Value* val = builder->create_alloca(arrayType);
                     scope.push(node.id, val);
                 }
             } else
-                ERROR("Cannot define a variable of void type\n");
+                ERROR("Cannot define a variable of void type");
         }
     }
     DEBUG_INFO("visit variable declaration over");
@@ -202,7 +203,7 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
     if (node.params.size() != 0 && node.params[0]->type != TYPE_VOID) {
         for (auto param : node.params) {
             if (param->type == TYPE_VOID)
-                ERROR("A parameter in parameter list cannot be a void type\n");
+                ERROR("A parameter in parameter list cannot be a void type");
             else if (param->type == TYPE_INT) {
                 if (param->isarray)
                     param_types.push_back(int32_ptr_type);
@@ -234,14 +235,10 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
     scope.push(node.id, func);
     scope.enter();
 
-    if (node.type == TYPE_INT)
-        return_val = builder->create_alloca(int32_type);
-    else if (node.type == TYPE_FLOAT)
-        return_val = builder->create_alloca(float_type);
     if (node.params.size() != 0 && node.params[0]->type != TYPE_VOID) {
         for (auto param : node.params) {
             if (param->type == TYPE_VOID)
-                ERROR("A parameter in parameter list cannot be void type\n");
+                ERROR("A parameter in parameter list cannot be void type");
             else
                 param->accept(*this);
         }
@@ -395,13 +392,13 @@ void CminusfBuilder::visit(ASTReturnStmt& node) {
         if (return_type->is_void_type())
             builder->create_void_ret();
         else
-            ERROR("void function should not return a value\n");
+            ERROR("void function should not return a value");
     } else {
         node.expression->accept(*this);
         if (ast_val->get_type()->is_pointer_type())
             ast_val = builder->create_load(ast_val);
         if (return_type->is_void_type())
-            ERROR("non-void function should return a value\n");
+            ERROR("non-void function should return a value");
         else {
             type_convert(ast_val, return_type, module, builder);
             builder->create_ret(ast_val);
@@ -437,7 +434,20 @@ void CminusfBuilder::visit(ASTVar& node) {
         builder->create_br(falseBB);
         // false basic block
         builder->set_insert_point(falseBB);
-        var = builder->create_gep(var, {CONST_INT(0), ast_val});
+        judge_type(var->get_type());
+        bool arg_flag = false;
+        const std::string& var_name = var->get_name();
+        for (auto& arg : current_func->get_args())
+            if (var_name == arg->get_name())
+                arg_flag = true;
+        if (arg_flag) {
+            DEBUG_INFO("arg");
+            var = builder->create_load(var);
+            var = builder->create_gep(var, {ast_val});
+        } else {
+            DEBUG_INFO("not arg");
+            var = builder->create_gep(var, {CONST_INT(0), ast_val});
+        }
     }
     // else var is 'a', it is enough
     ast_val = var;
@@ -621,20 +631,25 @@ void CminusfBuilder::visit(ASTCall& node) {
     else if (typeid(func) == typeid(Value*))
         std::cout << "convert fail\n";
     if (func == nullptr) {
-        ERROR("it is not a function\n");
+        ERROR("it is not a function");
         return;
     }
     auto argu_list = func->get_args();
     if (argu_list.size() > node.args.size())
-        ERROR("too few arguments in function call\n");
+        ERROR("too few arguments in function call");
     else if (argu_list.size() < node.args.size())
-        ERROR("too many arguments in function call\n");
+        ERROR("too many arguments in function call");
     else {
         std::vector<Value*> parameters;
         auto arg = argu_list.begin();
         for (auto& param : node.args) {
             param->accept(*this);
-            if (ast_val->get_type()->is_pointer_type())
+            if (ast_val->get_type()
+                    ->get_pointer_element_type()
+                    ->is_pointer_type())
+                ast_val =
+                    builder->create_gep(ast_val, {CONST_INT(0), CONST_INT(0)});
+            else if (ast_val->get_type()->is_pointer_type())
                 ast_val = builder->create_load(ast_val);
             type_convert(ast_val, (*arg)->get_type(), module, builder);
             parameters.push_back(ast_val);
@@ -642,5 +657,6 @@ void CminusfBuilder::visit(ASTCall& node) {
         }
         ast_val = builder->create_call(func, parameters);
     }
+    DEBUG_INFO(node.id);
     DEBUG_INFO("visit function call over");
 }
