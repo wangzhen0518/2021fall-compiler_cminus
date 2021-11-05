@@ -277,10 +277,12 @@ void CminusfBuilder::visit(ASTParam& node) {
 
 void CminusfBuilder::visit(ASTCompoundStmt& node) {
     DEBUG_INFO("visit compound statement");
+    scope.enter();
     for (auto& decl : node.local_declarations)
         decl->accept(*this);
     for (auto& stmt : node.statement_list)
         stmt->accept(*this);
+    scope.exit();
     DEBUG_INFO("visit compound statement over");
 }
 
