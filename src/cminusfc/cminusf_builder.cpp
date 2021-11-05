@@ -29,6 +29,7 @@ CminusType ast_num_type;
 // Constant* ast_num_val;
 Function* current_func;
 AllocaInst* return_val;
+Type* return_type;
 Value* ast_val;  // value of function call, expression, et
 
 void judge_type(Type* t) {
@@ -168,7 +169,6 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
     }
 
     // return type
-    Type* return_type;
     if (node.type == TYPE_VOID)
         return_type = void_type;
     else if (node.type == TYPE_INT)
@@ -189,7 +189,6 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
         return_val = builder->create_alloca(int32_type);
     else if (node.type == TYPE_FLOAT)
         return_val = builder->create_alloca(float_type);
-
     if (node.params.size() != 0 && node.params[0]->type != TYPE_VOID) {
         for (auto param : node.params) {
             if (param->type == TYPE_VOID)
@@ -198,7 +197,6 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
                 param->accept(*this);
         }
     }
-
     std::vector<Value*> args;
     for (auto arg = func->arg_begin(); arg != func->arg_end(); arg++)
         args.push_back(*arg);
@@ -321,19 +319,15 @@ void CminusfBuilder::visit(ASTIterationStmt& node) {
 void CminusfBuilder::visit(ASTReturnStmt& node) {
     DEBUG_INFO("visit return statement");
     if (node.expression == nullptr) {
-        if (return_val->get_alloca_type() == int32_type) {
-            builder->create_store({CONST_INT(0)}, return_val);
-            auto retans = builder->create_load(return_val);
-            builder->create_ret(retans);
-        } else if (return_val->get_alloca_type() == float_type) {
-            builder->create_store({CONST_FP(0.0)}, return_val);
-            auto retans = builder->create_load(return_val);
-            builder->create_ret(retans);
-        } else
-            builder->create_ret(nullptr);
+        if (return_type->is_void_type())
+            builder->create_void_ret();
+        else
+            ERROR("non-void function should return a value\n");
     } else {
         node.expression->accept(*this);
-        if (return_val->get_alloca_type() == int32_type) {
+        if (ast_val->get_type()->is_pointer_type())
+            ast_val = builder->create_load(ast_val);
+        if (return_type->is_integer_type()) {
             if (ast_val->get_type()->is_float_type()) {
                 auto fp_si = builder->create_fptosi(ast_val, int32_type);
                 builder->create_store(fp_si, return_val);
@@ -341,7 +335,7 @@ void CminusfBuilder::visit(ASTReturnStmt& node) {
                 builder->create_store(ast_val, return_val);
             auto retans = builder->create_load(return_val);
             builder->create_ret(retans);
-        } else if (return_val->get_alloca_type() == float_type) {
+        } else if (return_type->is_float_type()) {
             if (ast_val->get_type()->is_integer_type()) {
                 auto si_fp = builder->create_sitofp(ast_val, int32_type);
                 builder->create_store(si_fp, return_val);
@@ -350,7 +344,7 @@ void CminusfBuilder::visit(ASTReturnStmt& node) {
             auto retans = builder->create_load(return_val);
             builder->create_ret(retans);
         } else
-            ERROR("wrong return");
+            ERROR("void function should not return a value\n");
     }
     DEBUG_INFO("visit return statement over");
 }
