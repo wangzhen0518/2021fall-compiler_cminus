@@ -20,11 +20,14 @@
 #define int32_ptr_type Type::get_int32_ptr_type(module.get())
 #define float_ptr_type Type::get_float_ptr_type(module.get())
 
+#define MAX_INDEX 10'000'000
+
+int index_count;
 int ast_num_i;
 float ast_num_f;
 CminusType ast_num_type;
 // Constant* ast_num_val;
-Function* main_fun;
+Function* current_func;
 AllocaInst* return_val;
 Value* ast_val;  // value of function call, expression, et
 
@@ -173,14 +176,13 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
     else  // TYPE_FLOAT
         return_type = float_type;
 
-    auto Fun = Function::create(FunctionType::get(return_type, param_types),
-                                node.id, module.get());
-    if (node.id == "main")
-        main_fun = Fun;
+    auto func = Function::create(FunctionType::get(return_type, param_types),
+                                 node.id, module.get());
+    current_func = func;
 
-    auto bb = BasicBlock::create(module.get(), node.id, Fun);
+    auto bb = BasicBlock::create(module.get(), node.id, func);
     builder->set_insert_point(bb);
-    scope.push(node.id, Fun);
+    scope.push(node.id, func);
     scope.enter();
 
     if (node.type == TYPE_INT)
@@ -198,7 +200,7 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
     }
 
     std::vector<Value*> args;
-    for (auto arg = Fun->arg_begin(); arg != Fun->arg_end(); arg++)
+    for (auto arg = func->arg_begin(); arg != func->arg_end(); arg++)
         args.push_back(*arg);
     for (int i = 0; i < node.params.size(); i++)
         builder->create_store(args[i], scope.find(node.params[i]->id));
@@ -255,7 +257,24 @@ void CminusfBuilder::visit(ASTVar& node) {
             ast_val = builder->create_load(ast_val);
         if (ast_val->get_type()->is_float_type())
             ast_val = builder->create_fptosi(ast_val, int32_type);
-        // TODO: check array index, it should not be less than 0
+        auto icmp = builder->create_icmp_le(ast_val, CONST_INT(0));
+        // check the index
+        std::string label_name = node.id + std::to_string(index_count);
+        index_count = (index_count + 1) % MAX_INDEX;
+        auto trueBB = BasicBlock::create(module.get(), label_name + "_true",
+                                         current_func);
+        auto falseBB = BasicBlock::create(module.get(), label_name + "_false",
+                                          current_func);
+        auto br = builder->create_cond_br(icmp, trueBB, falseBB);
+        // true basic block
+        // index is less than 0, exit
+        builder->set_insert_point(trueBB);
+        builder->create_call(Function::create(FunctionType::get(void_type, {}),
+                                              "neg_idx_except", module.get()),
+                             {});
+        builder->create_br(falseBB);
+        // false basic block
+        builder->set_insert_point(falseBB);
         var = builder->create_gep(var, {CONST_INT(0), ast_val});
     }
     // else var is 'a', it is enough
