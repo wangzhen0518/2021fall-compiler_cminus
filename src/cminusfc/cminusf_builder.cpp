@@ -23,6 +23,7 @@
 #define MAX_INDEX 10'000'000
 
 int index_count;
+int select_count;
 int ast_num_i;
 float ast_num_f;
 CminusType ast_num_type;
@@ -253,12 +254,20 @@ void CminusfBuilder::visit(ASTSelectionStmt& node) {
     if (node.expression != nullptr) {
         node.expression->accept(*this);
         if (node.else_statement != nullptr) {
-            auto truebb =
-                BasicBlock::create(module.get(), "true", current_func);
-            auto falsebb =
-                BasicBlock::create(module.get(), "false", current_func);
-            auto retbb = BasicBlock::create(module.get(), "ret", current_func);
+            auto truebb = BasicBlock::create(
+                module.get(), "true" + std::to_string(select_count),
+                current_func);
+            auto falsebb = BasicBlock::create(
+                module.get(), "false" + std::to_string(select_count),
+                current_func);
+            auto retbb = BasicBlock::create(
+                module.get(), "ret" + std::to_string(select_count),
+                current_func);
+            select_count = (select_count + 1) % MAX_INDEX;
             if (ast_val->get_type()->is_integer_type()) {
+                if (ast_val->get_type() == Type::get_int1_type(module.get())) {
+                    ast_val = builder->create_zext(ast_val, int32_type);
+                }
                 auto cmp = builder->create_icmp_ne(ast_val, {CONST_INT(0)});
                 builder->create_cond_br(cmp, truebb, falsebb);
             } else {
@@ -276,14 +285,24 @@ void CminusfBuilder::visit(ASTSelectionStmt& node) {
             // ret
             builder->set_insert_point(retbb);
         } else {
-            auto truebb =
-                BasicBlock::create(module.get(), "true", current_func);
-            auto retbb = BasicBlock::create(module.get(), "ret", current_func);
+            auto truebb = BasicBlock::create(
+                module.get(), "true" + std::to_string(select_count),
+                current_func);
+            auto retbb = BasicBlock::create(
+                module.get(), "ret" + std::to_string(select_count),
+                current_func);
+            select_count = (select_count + 1) % MAX_INDEX;
+            if (ast_val->get_type()->is_pointer_type()) {
+                ast_val = builder->create_load(ast_val);
+            }
             if (ast_val->get_type()->is_integer_type()) {
-                auto cmp = builder->create_icmp_ne(ast_val, {CONST_INT(0)});
+                if (ast_val->get_type() == Type::get_int1_type(module.get())) {
+                    ast_val = builder->create_zext(ast_val, int32_type);
+                }
+                auto cmp = builder->create_icmp_ne(ast_val, CONST_INT(0));
                 builder->create_cond_br(cmp, truebb, retbb);
             } else {
-                auto cmp = builder->create_fcmp_ne(ast_val, {CONST_FP(0.0)});
+                auto cmp = builder->create_fcmp_ne(ast_val, CONST_FP(0.0));
                 builder->create_cond_br(cmp, truebb, retbb);
             }
             // true
