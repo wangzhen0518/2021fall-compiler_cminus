@@ -31,7 +31,6 @@ CminusType ast_num_type;
 // Constant* ast_num_val;
 Function* current_func;
 AllocaInst* return_val;
-CminusType return_val_type;
 Type* return_type;
 Value* ast_val;  // value of function call, expression, et
 
@@ -237,16 +236,6 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
     builder->set_insert_point(bb);
     scope.push(node.id, func);
     scope.enter();
-
-    if (node.type == TYPE_INT) {
-        return_val = builder->create_alloca(int32_type);
-        return_val_type = TYPE_INT;
-    } else if (node.type == TYPE_FLOAT) {
-        return_val = builder->create_alloca(float_type);
-        return_val_type = TYPE_FLOAT;
-    } else {
-        return_val_type = TYPE_VOID;
-    }
 
     if (node.params.size() != 0 && node.params[0]->type != TYPE_VOID) {
         for (auto param : node.params) {
