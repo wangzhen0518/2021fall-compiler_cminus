@@ -1,11 +1,11 @@
 #include "cminusf_builder.hpp"
 
+#define DEBUG
 #ifdef DEBUG  // 用于调试信息,大家可以在编译过程中通过" -DDEBUG"来开启这一选项
 #define DEBUG_OUTPUT std::cout << __LINE__ << std::endl  // 输出行号的简单示例
 #define DEBUG_INFO(S) std::cout << S << std::endl
 #else
 #define DEBUG_OUTPUT
-#define DEBUG_INFO(S)
 #endif
 
 #define ERROR(comment) std::cout << comment
@@ -437,7 +437,12 @@ void CminusfBuilder::visit(ASTVar& node) {
         builder->create_br(falseBB);
         // false basic block
         builder->set_insert_point(falseBB);
-        var = builder->create_gep(var, {CONST_INT(0), ast_val});
+        if (builder->create_load(var)->get_type()->is_pointer_type()) {
+            var = builder->create_load(var);
+            var = builder->create_gep(var, {ast_val});
+        } else {
+            var = builder->create_gep(var, {CONST_INT(0), ast_val});
+        }
     }
     // else var is 'a', it is enough
     ast_val = var;
@@ -635,7 +640,14 @@ void CminusfBuilder::visit(ASTCall& node) {
         for (auto& param : node.args) {
             param->accept(*this);
             if (ast_val->get_type()->is_pointer_type())
-                ast_val = builder->create_load(ast_val);
+                if (builder->create_load(ast_val)
+                        ->get_type()
+                        ->is_array_type()) {
+                    ast_val = builder->create_gep(ast_val,
+                                                  {CONST_INT(0), CONST_INT(0)});
+                } else {
+                    ast_val = builder->create_load(ast_val);
+                }
             type_convert(ast_val, (*arg)->get_type(), module, builder);
             parameters.push_back(ast_val);
             arg++;
