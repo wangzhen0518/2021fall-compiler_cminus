@@ -1,11 +1,11 @@
 #include "cminusf_builder.hpp"
 
-#define DEBUG
 #ifdef DEBUG  // 用于调试信息,大家可以在编译过程中通过" -DDEBUG"来开启这一选项
 #define DEBUG_OUTPUT std::cout << __LINE__ << std::endl  // 输出行号的简单示例
 #define DEBUG_INFO(S) std::cout << S << std::endl
 #else
 #define DEBUG_OUTPUT
+#define DEBUG_INFO(S)
 #endif
 
 #define ERROR(comment) std::cout << comment
@@ -415,7 +415,7 @@ void CminusfBuilder::visit(ASTVar& node) {
             ast_val = builder->create_load(ast_val);
         if (ast_val->get_type()->is_float_type())
             ast_val = builder->create_fptosi(ast_val, int32_type);
-        auto icmp = builder->create_icmp_le(ast_val, CONST_INT(0));
+        auto icmp = builder->create_icmp_lt(ast_val, CONST_INT(0));
         // check the index
         std::string label_name = node.id + std::to_string(index_count);
         index_count = (index_count + 1) % MAX_INDEX;
@@ -427,9 +427,7 @@ void CminusfBuilder::visit(ASTVar& node) {
         // true basic block
         // index is less than 0, exit
         builder->set_insert_point(trueBB);
-        builder->create_call(Function::create(FunctionType::get(void_type, {}),
-                                              "neg_idx_except", module.get()),
-                             {});
+        builder->create_call(scope.find("neg_idx_except"), {});
         builder->create_br(falseBB);
         // false basic block
         builder->set_insert_point(falseBB);
@@ -524,7 +522,6 @@ void CminusfBuilder::visit(ASTSimpleExpression& node) {
                 break;
         }
     }
-    judge_type(ast_val->get_type());
     DEBUG_INFO("visit simple expression over");
 }
 
@@ -619,9 +616,6 @@ void CminusfBuilder::visit(ASTCall& node) {
         std::cout << "convert fail\n";
     if (func == nullptr) {
         ERROR("it is not a function\n");
-        builder->create_call(Function::create(FunctionType::get(void_type, {}),
-                                              "neg_idx_except", module.get()),
-                             {});
         return;
     }
     auto argu_list = func->get_args();
