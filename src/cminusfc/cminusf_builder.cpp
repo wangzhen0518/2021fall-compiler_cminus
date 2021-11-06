@@ -26,8 +26,8 @@
 
 int count;
 int ast_num_i;
-float ast_num_f;
-CminusType ast_num_type;
+// float ast_num_f;
+// CminusType ast_num_type;
 // Constant* ast_num_val;
 Function* current_func;
 bool is_return = false;
@@ -111,13 +111,13 @@ void CminusfBuilder::visit(ASTProgram& node) {
 void CminusfBuilder::visit(ASTNum& node) {
     DEBUG_INFO("visit num");
     if (node.type == TYPE_INT) {
-        ast_num_type = TYPE_INT;
+        // ast_num_type = TYPE_INT;
         ast_num_i = node.i_val;
         ast_val = CONST_INT(node.i_val);
         DEBUG_INFO(ast_num_i);
     } else if (node.type == TYPE_FLOAT) {
-        ast_num_type = TYPE_FLOAT;
-        ast_num_f = node.f_val;
+        // ast_num_type = TYPE_FLOAT;
+        // ast_num_f = node.f_val;
         ast_val = CONST_FP(node.f_val);
         DEBUG_INFO(ast_num_f);
     }
@@ -258,9 +258,11 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
         args.push_back(*arg);
     for (int i = 0; i < node.params.size(); i++)
         builder->create_store(args[i], scope.find(node.params[i]->id));
+
     node.compound_stmt->accept(*this);
-    if (return_val != nullptr && return_type->is_void_type())
+    if (!is_return)
         builder->create_br(return_block);
+
     builder->set_insert_point(return_block);
     if (return_val == nullptr || return_type->is_void_type())
         builder->create_void_ret();
@@ -307,7 +309,6 @@ void CminusfBuilder::visit(ASTExpressionStmt& node) {
 }
 
 void CminusfBuilder::visit(ASTSelectionStmt& node) {
-    // DEBUG_INFO("visit selection statement");
     int current_count = count;
     count = (count + 1) % MAX_COUNT;
     DEBUG_INFO("if" + std::to_string(current_count));
@@ -382,6 +383,7 @@ void CminusfBuilder::visit(ASTSelectionStmt& node) {
             builder->set_insert_point(exitbb);
         }
     }
+    is_return = false;  // reset
     DEBUG_INFO("end if" + std::to_string(current_count));
     // DEBUG_INFO("visit selection statement over");
 }
@@ -421,6 +423,7 @@ void CminusfBuilder::visit(ASTIterationStmt& node) {
         // exitbb
         builder->set_insert_point(exitbb);
     }
+    is_return = false;  // reset
     DEBUG_INFO("end while" + std::to_string(current_count));
     // DEBUG_INFO("visit iteration statement over");
 }
@@ -476,7 +479,6 @@ void CminusfBuilder::visit(ASTVar& node) {
         builder->create_br(falseBB);
         // false basic block
         builder->set_insert_point(falseBB);
-        // if (builder->create_load(var)->get_type()->is_pointer_type()) {
         if (var->get_type()->get_pointer_element_type()->is_pointer_type()) {
             var = builder->create_load(var);
             var = builder->create_gep(var, {ast_val});
