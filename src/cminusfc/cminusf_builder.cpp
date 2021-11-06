@@ -1,11 +1,12 @@
 #include "cminusf_builder.hpp"
 
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG  // 用于调试信息,大家可以在编译过程中通过" -DDEBUG"来开启这一选项
 #define DEBUG_OUTPUT std::cout << __LINE__ << std::endl  // 输出行号的简单示例
 #define DEBUG_INFO(S) std::cout << S << std::endl
 #else
 #define DEBUG_OUTPUT
+#define DEBUG_INFO(S)
 #endif
 
 #define ERROR(comment) std::cout << comment << std::endl
@@ -29,19 +30,23 @@ float ast_num_f;
 CminusType ast_num_type;
 // Constant* ast_num_val;
 Function* current_func;
-// AllocaInst* return_val;
+bool is_return = false;
+AllocaInst* return_val;
 Type* return_type;
+BasicBlock* return_block;
 Value* ast_val;  // value of function call, expression, et
 
-void judge_type(Type* t) {
+void judge_type(Type* t, std::unique_ptr<Module>& module) {
     if (t->is_array_type())
         std::cout << "array type\n";
     else if (t->is_function_type())
         std::cout << "function type\n";
     else if (t->is_float_type())
         std::cout << "float type\n";
-    else if (t->is_integer_type())
-        std::cout << "integer type\n";
+    else if (t == int32_type)
+        std::cout << "int32 type\n";
+    else if (t == int1_type)
+        std::cout << "int1 type\n";
     else if (t->is_pointer_type())
         std::cout << "pointer type\n";
     else if (t->is_void_type())
@@ -109,10 +114,12 @@ void CminusfBuilder::visit(ASTNum& node) {
         ast_num_type = TYPE_INT;
         ast_num_i = node.i_val;
         ast_val = CONST_INT(node.i_val);
+        DEBUG_INFO(ast_num_i);
     } else if (node.type == TYPE_FLOAT) {
         ast_num_type = TYPE_FLOAT;
         ast_num_f = node.f_val;
         ast_val = CONST_FP(node.f_val);
+        DEBUG_INFO(ast_num_f);
     }
     DEBUG_INFO("visit num over");
 }
@@ -230,10 +237,14 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
     current_func = func;
 
     auto bb = BasicBlock::create(module.get(), node.id, func);
+    return_block = BasicBlock::create(module.get(), "return_" + node.id, func);
     builder->set_insert_point(bb);
     scope.push(node.id, func);
     scope.enter();
-
+    if (node.type == TYPE_INT)
+        return_val = builder->create_alloca(int32_type);
+    else if (node.type == TYPE_FLOAT)
+        return_val = builder->create_alloca(float_type);
     if (node.params.size() != 0 && node.params[0]->type != TYPE_VOID) {
         for (auto param : node.params) {
             if (param->type == TYPE_VOID)
@@ -248,6 +259,15 @@ void CminusfBuilder::visit(ASTFunDeclaration& node) {
     for (int i = 0; i < node.params.size(); i++)
         builder->create_store(args[i], scope.find(node.params[i]->id));
     node.compound_stmt->accept(*this);
+    if (return_val != nullptr && return_type->is_void_type())
+        builder->create_br(return_block);
+    builder->set_insert_point(return_block);
+    if (return_val == nullptr || return_type->is_void_type())
+        builder->create_void_ret();
+    else {
+        ast_val = builder->create_load(return_val);
+        builder->create_ret(ast_val);
+    }
     scope.exit();
     DEBUG_INFO("visit function declaration over");
 }
@@ -292,37 +312,49 @@ void CminusfBuilder::visit(ASTSelectionStmt& node) {
         node.expression->accept(*this);
         if (node.else_statement != nullptr) {
             auto truebb = BasicBlock::create(
-                module.get(), "true" + std::to_string(count), current_func);
+                module.get(), "true_" + std::to_string(count), current_func);
             auto falsebb = BasicBlock::create(
-                module.get(), "false" + std::to_string(count), current_func);
-            auto exitbb = BasicBlock::create(
-                module.get(), "ret" + std::to_string(count), current_func);
+                module.get(), "false_" + std::to_string(count), current_func);
+            BasicBlock* exitbb = nullptr;
             count = (count + 1) % MAX_COUNT;
             if (ast_val->get_type()->is_integer_type()) {
-                if (ast_val->get_type() == Type::get_int1_type(module.get())) {
+                if (ast_val->get_type() == int1_type)
                     ast_val = builder->create_zext(ast_val, int32_type);
-                }
-                auto cmp = builder->create_icmp_ne(ast_val, {CONST_INT(0)});
-                builder->create_cond_br(cmp, truebb, falsebb);
-            } else {
-                auto cmp = builder->create_fcmp_ne(ast_val, {CONST_FP(0.0)});
-                builder->create_cond_br(cmp, truebb, falsebb);
-            }
+                ast_val = builder->create_icmp_ne(ast_val, {CONST_INT(0)});
+            } else
+                ast_val = builder->create_fcmp_ne(ast_val, {CONST_FP(0.0)});
+            builder->create_cond_br(ast_val, truebb, falsebb);
             // true
             builder->set_insert_point(truebb);
+            is_return = false;
             node.if_statement->accept(*this);
-            builder->create_br(exitbb);
+            if (!is_return) {
+                DEBUG_INFO("true block no return");
+                exitbb = BasicBlock::create(module.get(),
+                                            "exit_" + std::to_string(count),
+                                            current_func);
+                builder->create_br(exitbb);
+            }
             // false
             builder->set_insert_point(falsebb);
+            is_return = false;
             node.else_statement->accept(*this);
-            builder->create_br(exitbb);
-            // ret
-            builder->set_insert_point(exitbb);
+            if (!is_return) {
+                DEBUG_INFO("false block no return");
+                if (exitbb == nullptr)
+                    exitbb = BasicBlock::create(module.get(),
+                                                "exit_" + std::to_string(count),
+                                                current_func);
+                builder->create_br(exitbb);
+            }
+            // exit
+            if (!is_return)
+                builder->set_insert_point(exitbb);
         } else {
             auto truebb = BasicBlock::create(
-                module.get(), "true" + std::to_string(count), current_func);
-            auto exitbb = BasicBlock::create(
-                module.get(), "ret" + std::to_string(count), current_func);
+                module.get(), "true_" + std::to_string(count), current_func);
+            BasicBlock* exitbb = exitbb = BasicBlock::create(
+                module.get(), "exit_" + std::to_string(count), current_func);
             count = (count + 1) % MAX_COUNT;
             if (ast_val->get_type()->is_pointer_type()) {
                 ast_val = builder->create_load(ast_val);
@@ -331,17 +363,17 @@ void CminusfBuilder::visit(ASTSelectionStmt& node) {
                 if (ast_val->get_type() == Type::get_int1_type(module.get())) {
                     ast_val = builder->create_zext(ast_val, int32_type);
                 }
-                auto cmp = builder->create_icmp_ne(ast_val, CONST_INT(0));
-                builder->create_cond_br(cmp, truebb, exitbb);
-            } else {
-                auto cmp = builder->create_fcmp_ne(ast_val, CONST_FP(0.0));
-                builder->create_cond_br(cmp, truebb, exitbb);
-            }
+                ast_val = builder->create_icmp_ne(ast_val, CONST_INT(0));
+            } else
+                ast_val = builder->create_fcmp_ne(ast_val, CONST_FP(0.0));
+            builder->create_cond_br(ast_val, truebb, exitbb);
             // true
             builder->set_insert_point(truebb);
+            is_return = false;
             node.if_statement->accept(*this);
-            builder->create_br(exitbb);
-            // ret
+            if (!is_return)
+                builder->create_br(exitbb);
+            // exit
             builder->set_insert_point(exitbb);
         }
     }
@@ -355,8 +387,8 @@ void CminusfBuilder::visit(ASTIterationStmt& node) {
             module.get(), "cmp_" + std::to_string(count), current_func);
         auto circlebb = BasicBlock::create(
             module.get(), "circle_" + std::to_string(count), current_func);
-        auto exitbb = BasicBlock::create(
-            module.get(), "ret_" + std::to_string(count), current_func);
+        BasicBlock* exitbb = exitbb = BasicBlock::create(
+            module.get(), "exit_" + std::to_string(count), current_func);
         count = (count + 1) % MAX_COUNT;
         builder->create_br(cmpbb);
         // cmp
@@ -365,19 +397,18 @@ void CminusfBuilder::visit(ASTIterationStmt& node) {
         node.expression->accept(*this);
         if (ast_val->get_type()->is_pointer_type())
             ast_val = builder->create_load(ast_val);
-        if (ast_val->get_type() == int1_type)
-            builder->create_cond_br(ast_val, circlebb, exitbb);
-        else if (ast_val->get_type()->is_integer_type()) {
+        if (ast_val->get_type() == int32_type)
             ast_val = builder->create_icmp_ne(ast_val, {CONST_INT(0)});
-            builder->create_cond_br(ast_val, circlebb, exitbb);
-        } else {
+        else if (ast_val->get_type()->is_float_type())
             ast_val = builder->create_fcmp_ne(ast_val, {CONST_FP(0.0)});
-            builder->create_cond_br(ast_val, circlebb, exitbb);
-        }
+        builder->create_cond_br(ast_val, circlebb, exitbb);
         // circle
+        is_return = false;
         builder->set_insert_point(circlebb);
         node.statement->accept(*this);
-        builder->create_br(cmpbb);
+        if (!is_return)
+            builder->create_br(cmpbb);
+
         // exitbb
         builder->set_insert_point(exitbb);
         scope.exit();
@@ -388,21 +419,23 @@ void CminusfBuilder::visit(ASTIterationStmt& node) {
 void CminusfBuilder::visit(ASTReturnStmt& node) {
     DEBUG_INFO("visit return statement");
     if (node.expression == nullptr) {
-        if (return_type->is_void_type())
-            builder->create_void_ret();
-        else
+        if (!return_type->is_void_type())
             ERROR("void function should not return a value");
+        return_val = nullptr;
     } else {
         node.expression->accept(*this);
         if (ast_val->get_type()->is_pointer_type())
             ast_val = builder->create_load(ast_val);
-        if (return_type->is_void_type())
+        if (return_type->is_void_type()) {
             ERROR("non-void function should return a value");
-        else {
+            return_val = nullptr;
+        } else {
             type_convert(ast_val, return_type, module, builder);
-            builder->create_ret(ast_val);
+            builder->create_store(ast_val, return_val);
         }
     }
+    is_return = true;
+    builder->create_br(return_block);
     DEBUG_INFO("visit return statement over");
 }
 
@@ -433,7 +466,8 @@ void CminusfBuilder::visit(ASTVar& node) {
         builder->create_br(falseBB);
         // false basic block
         builder->set_insert_point(falseBB);
-        if (builder->create_load(var)->get_type()->is_pointer_type()) {
+        // if (builder->create_load(var)->get_type()->is_pointer_type()) {
+        if (var->get_type()->get_pointer_element_type()->is_pointer_type()) {
             var = builder->create_load(var);
             var = builder->create_gep(var, {ast_val});
         } else {
@@ -636,14 +670,13 @@ void CminusfBuilder::visit(ASTCall& node) {
         for (auto& param : node.args) {
             param->accept(*this);
             if (ast_val->get_type()->is_pointer_type())
-                if (builder->create_load(ast_val)
-                        ->get_type()
+                if (ast_val->get_type()
+                        ->get_pointer_element_type()
                         ->is_array_type()) {
                     ast_val = builder->create_gep(ast_val,
                                                   {CONST_INT(0), CONST_INT(0)});
-                } else {
+                } else
                     ast_val = builder->create_load(ast_val);
-                }
             type_convert(ast_val, (*arg)->get_type(), module, builder);
             parameters.push_back(ast_val);
             arg++;
