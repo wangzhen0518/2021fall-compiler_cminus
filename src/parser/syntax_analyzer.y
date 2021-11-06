@@ -166,13 +166,9 @@ factor
 | integer { $$ = node( "factor", 1, $1); }
 | float { $$ = node( "factor", 1, $1); }
 
-integer
-: INTEGER { $$ = node( "integer", 1, $1); }
-// | MINUS INTEGER { $$ = node( "integer", 2, $1, $2); }
+integer: INTEGER { $$ = node( "integer", 1, $1); }
 
-float
-: FLOATPOINT { $$ = node( "float", 1, $1); }
-// | MINUS FLOATPOINT { $$ = node( "float", 2, $1, $2); }
+float: FLOATPOINT { $$ = node( "float", 1, $1); }
 
 call
 : ID LPAREN args RPAREN { $$ = node( "call", 4, $1, $2, $3, $4); }
