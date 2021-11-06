@@ -1,6 +1,6 @@
 #include "cminusf_builder.hpp"
 
-#define DEBUG
+// #define DEBUG
 #ifdef DEBUG  // 用于调试信息,大家可以在编译过程中通过" -DDEBUG"来开启这一选项
 #define DEBUG_OUTPUT std::cout << __LINE__ << std::endl  // 输出行号的简单示例
 #define DEBUG_INFO(S) std::cout << S << std::endl
@@ -403,7 +403,6 @@ void CminusfBuilder::visit(ASTIterationStmt& node) {
         builder->create_br(cmpbb);
         // cmp
         builder->set_insert_point(cmpbb);
-        scope.enter();
         node.expression->accept(*this);
         if (ast_val->get_type()->is_pointer_type())
             ast_val = builder->create_load(ast_val);
@@ -421,7 +420,6 @@ void CminusfBuilder::visit(ASTIterationStmt& node) {
 
         // exitbb
         builder->set_insert_point(exitbb);
-        scope.exit();
     }
     DEBUG_INFO("end while" + std::to_string(current_count));
     // DEBUG_INFO("visit iteration statement over");
