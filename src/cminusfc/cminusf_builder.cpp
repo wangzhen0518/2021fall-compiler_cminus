@@ -1,6 +1,6 @@
 #include "cminusf_builder.hpp"
 
-//#define DEBUG
+#define DEBUG
 #ifdef DEBUG  // 用于调试信息,大家可以在编译过程中通过" -DDEBUG"来开启这一选项
 #define DEBUG_OUTPUT std::cout << __LINE__ << std::endl  // 输出行号的简单示例
 #define DEBUG_INFO(S) std::cout << S << std::endl
@@ -307,16 +307,20 @@ void CminusfBuilder::visit(ASTExpressionStmt& node) {
 }
 
 void CminusfBuilder::visit(ASTSelectionStmt& node) {
-    DEBUG_INFO("visit selection statement");
+    // DEBUG_INFO("visit selection statement");
+    int current_count = count;
+    count = (count + 1) % MAX_COUNT;
+    DEBUG_INFO("if" + std::to_string(current_count));
     if (node.expression != nullptr) {
         node.expression->accept(*this);
-        if (node.else_statement != nullptr) {
+        if (node.else_statement != nullptr) {  // if ... else ...
             auto truebb = BasicBlock::create(
-                module.get(), "true_" + std::to_string(count), current_func);
+                module.get(), "true_" + std::to_string(current_count),
+                current_func);
             auto falsebb = BasicBlock::create(
-                module.get(), "false_" + std::to_string(count), current_func);
+                module.get(), "false_" + std::to_string(current_count),
+                current_func);
             BasicBlock* exitbb = nullptr;
-            count = (count + 1) % MAX_COUNT;
             if (ast_val->get_type()->is_integer_type()) {
                 if (ast_val->get_type() == int1_type)
                     ast_val = builder->create_zext(ast_val, int32_type);
@@ -330,9 +334,9 @@ void CminusfBuilder::visit(ASTSelectionStmt& node) {
             node.if_statement->accept(*this);
             if (!is_return) {
                 DEBUG_INFO("true block no return");
-                exitbb = BasicBlock::create(module.get(),
-                                            "exit_" + std::to_string(count),
-                                            current_func);
+                exitbb = BasicBlock::create(
+                    module.get(), "exit_" + std::to_string(current_count),
+                    current_func);
                 builder->create_br(exitbb);
             }
             // false
@@ -342,20 +346,21 @@ void CminusfBuilder::visit(ASTSelectionStmt& node) {
             if (!is_return) {
                 DEBUG_INFO("false block no return");
                 if (exitbb == nullptr)
-                    exitbb = BasicBlock::create(module.get(),
-                                                "exit_" + std::to_string(count),
-                                                current_func);
+                    exitbb = BasicBlock::create(
+                        module.get(), "exit_" + std::to_string(current_count),
+                        current_func);
                 builder->create_br(exitbb);
             }
             // exit
             if (!is_return)
                 builder->set_insert_point(exitbb);
-        } else {
+        } else {  // if ...
             auto truebb = BasicBlock::create(
-                module.get(), "true_" + std::to_string(count), current_func);
+                module.get(), "true_" + std::to_string(current_count),
+                current_func);
             BasicBlock* exitbb = exitbb = BasicBlock::create(
-                module.get(), "exit_" + std::to_string(count), current_func);
-            count = (count + 1) % MAX_COUNT;
+                module.get(), "exit_" + std::to_string(current_count),
+                current_func);
             if (ast_val->get_type()->is_pointer_type()) {
                 ast_val = builder->create_load(ast_val);
             }
@@ -377,19 +382,24 @@ void CminusfBuilder::visit(ASTSelectionStmt& node) {
             builder->set_insert_point(exitbb);
         }
     }
-    DEBUG_INFO("visit selection statement over");
+    DEBUG_INFO("end if" + std::to_string(current_count));
+    // DEBUG_INFO("visit selection statement over");
 }
 
 void CminusfBuilder::visit(ASTIterationStmt& node) {
-    DEBUG_INFO("visit iteration statement");
+    // DEBUG_INFO("visit iteration statement");
+    int current_count = count;
+    count = (count + 1) % MAX_COUNT;
+    DEBUG_INFO("while" + std::to_string(current_count));
     if (node.expression != nullptr && node.statement != nullptr) {
         auto cmpbb = BasicBlock::create(
-            module.get(), "cmp_" + std::to_string(count), current_func);
+            module.get(), "cmp_" + std::to_string(current_count), current_func);
         auto circlebb = BasicBlock::create(
-            module.get(), "circle_" + std::to_string(count), current_func);
+            module.get(), "circle_" + std::to_string(current_count),
+            current_func);
         BasicBlock* exitbb = exitbb = BasicBlock::create(
-            module.get(), "exit_" + std::to_string(count), current_func);
-        count = (count + 1) % MAX_COUNT;
+            module.get(), "exit_" + std::to_string(current_count),
+            current_func);
         builder->create_br(cmpbb);
         // cmp
         builder->set_insert_point(cmpbb);
@@ -413,7 +423,8 @@ void CminusfBuilder::visit(ASTIterationStmt& node) {
         builder->set_insert_point(exitbb);
         scope.exit();
     }
-    DEBUG_INFO("visit iteration statement over");
+    DEBUG_INFO("end while" + std::to_string(current_count));
+    // DEBUG_INFO("visit iteration statement over");
 }
 
 void CminusfBuilder::visit(ASTReturnStmt& node) {
@@ -442,6 +453,7 @@ void CminusfBuilder::visit(ASTReturnStmt& node) {
 void CminusfBuilder::visit(ASTVar& node) {
     DEBUG_INFO("visit variable");
     auto var = scope.find(node.id);
+    DEBUG_INFO(node.id);
     // if var is 'a[i]', it is necessary to get 'a[i]'
     // as var is 'a' now
     if (node.expression != nullptr) {
@@ -477,7 +489,6 @@ void CminusfBuilder::visit(ASTVar& node) {
     // else var is 'a', it is enough
     ast_val = var;
     DEBUG_INFO("visit variable over");
-    DEBUG_INFO(node.id);
 }
 
 void CminusfBuilder::visit(ASTAssignExpression& node) {
@@ -651,14 +662,11 @@ void CminusfBuilder::visit(ASTTerm& node) {
 void CminusfBuilder::visit(ASTCall& node) {
     DEBUG_INFO("visit function call");
     Function* func = dynamic_cast<Function*>(scope.find(node.id));
-    if (typeid(func) == typeid(Function*))
-        std::cout << "convert succeed\n";
-    else if (typeid(func) == typeid(Value*))
-        std::cout << "convert fail\n";
     if (func == nullptr) {
         ERROR("it is not a function");
         return;
     }
+    DEBUG_INFO(node.id);
     auto argu_list = func->get_args();
     if (argu_list.size() > node.args.size())
         ERROR("too few arguments in function call");
@@ -683,6 +691,5 @@ void CminusfBuilder::visit(ASTCall& node) {
         }
         ast_val = builder->create_call(func, parameters);
     }
-    DEBUG_INFO(node.id);
     DEBUG_INFO("visit function call over");
 }
