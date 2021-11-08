@@ -106,6 +106,8 @@ void type_convert(Value*& l, Value*& r, Type* target,
 void CminusfBuilder::visit(ASTProgram& node) {
     for (auto& decl : node.declarations)
         decl->accept(*this);
+    if (scope.find("main") == nullptr)
+        ERROR("must have a main function");
 }
 
 void CminusfBuilder::visit(ASTNum& node) {
