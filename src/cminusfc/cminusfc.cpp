@@ -97,11 +97,11 @@ int main(int argc, char **argv) {
 
     if( mem2reg )
     {
-        PM.add_pass<Mem2Reg>();
+        PM.add_pass<Mem2Reg>(true);
     }
     if( loop_search )
     {
-        PM.add_pass<LoopSearch>();
+        PM.add_pass<LoopSearch>(true);
     }
     if( const_propagation )
     {
@@ -113,7 +113,7 @@ int main(int argc, char **argv) {
     }
     if( loop_inv_hoist )
     {
-        PM.add_pass<LoopInvHoist>(true);
+        PM.add_pass<LoopInvHoist>();
     }
     PM.run();
     
