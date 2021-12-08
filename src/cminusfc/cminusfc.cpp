@@ -1,5 +1,3 @@
-#include <dbg.h>
-
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -26,7 +24,6 @@ void print_help(std::string exe_name) {
 int main(int argc, char **argv) {
     std::string target_path;
     std::string input_path;
-    dbg("in main");
     bool mem2reg = false;
     bool const_propagation = false;
     bool activevars = false;
@@ -133,6 +130,5 @@ int main(int argc, char **argv) {
         else
             return 1;
     }
-    dbg("over");
     return 0;
 }

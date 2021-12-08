@@ -1,7 +1,5 @@
 #include "ConstPropagation.hpp"
 
-#include <dbg.h>
-
 #include <unordered_map>
 #include <unordered_set>
 
@@ -96,7 +94,6 @@ Constant* ConstFolder::compute(Instruction* instr, Constant* value1,
     auto constant_int_ptr2 = dynamic_cast<ConstantInt*>(value2);
     if (constant_int_ptr1 && constant_int_ptr2) {
         // both integer
-        dbg("both integer");
         int c_value1 = constant_int_ptr1->get_value();
         int c_value2 = constant_int_ptr2->get_value();
         switch (instr->get_instr_type()) {
@@ -134,7 +131,6 @@ Constant* ConstFolder::compute(Instruction* instr, Constant* value1,
         }
     } else {
         // both are float
-        dbg("both float");
         auto constant_fp_ptr1 = dynamic_cast<ConstantFP*>(value1);
         auto constant_fp_ptr2 = dynamic_cast<ConstantFP*>(value2);
         float c_value1, c_value2;
@@ -209,9 +205,7 @@ inline GlobalVariable* cast_globalvar(Value* value) {
 }
 
 void ConstPropagation::run() {
-    dbg(this);
-    dbg("in constant propagation run");
-    ConstFolder* floder_ = new ConstFolder(m_);
+    ConstFolder floder_(m_);
     for (auto func : this->m_->get_functions()) {
         for (auto bb : func->get_basic_blocks()) {
             std::vector<Instruction*> wait_delete;
@@ -350,21 +344,16 @@ void ConstPropagation::run() {
                             rval = dynamic_cast<Constant*>(operands[1]);
                             if (lval && rval) {
                                 auto result =
-                                    floder_->compute(instr, lval, rval);
+                                    floder_.compute(instr, lval, rval);
                                 instr->replace_all_use_with(result);
                                 wait_delete.emplace_back(instr);
                             }
                         }
                     } break;
                 }  // end switch
-                dbg(instr);
-            }  // end for (auto instr : bb->get_instructions())
+            }      // end for (auto instr : bb->get_instructions())
             for (auto instr : wait_delete)
                 bb->delete_instr(instr);
-            dbg(bb);
         }  // end for (auto bb : func->get_basic_blocks())
-        dbg(func);
-    }  // for (auto func : this->m_->get_functions())
-    delete floder_;
-    dbg("here");
+    }      // for (auto func : this->m_->get_functions())
 }
