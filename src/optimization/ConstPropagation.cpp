@@ -140,7 +140,6 @@ Constant* ConstFolder::compute(Instruction* instr, Constant* value1,
         float c_value1, c_value2;
         c_value1 = constant_fp_ptr1->get_value();
         c_value2 = constant_fp_ptr2->get_value();
-
         switch (instr->get_instr_type()) {
             case Instruction::fadd:
                 return ConstantFP::get(c_value1 + c_value2, module_);
@@ -149,7 +148,7 @@ Constant* ConstFolder::compute(Instruction* instr, Constant* value1,
             case Instruction::fmul:
                 return ConstantFP::get(c_value1 * c_value2, module_);
             case Instruction::fdiv:
-                if (c_value2 != 0)
+                if (c_value2 != 0.0)
                     return ConstantFP::get(c_value1 / c_value2, module_);
             case Instruction::fcmp: {
                 auto cmp_instr = dynamic_cast<FCmpInst*>(instr);
@@ -238,39 +237,29 @@ void ConstPropagation::run() {
                 auto& operands = instr->get_operands();
                 switch (op_) {
                     case Instruction::ret:
-                        break;
-                    case Instruction::br:
-                        break;
-                    case Instruction::add:
-                    case Instruction::sub:
-                    case Instruction::mul:
-                    case Instruction::sdiv:
-                    case Instruction::cmp: {
-                        ConstantInt *lptr, *rptr;
-                        lptr = dynamic_cast<ConstantInt*>(operands[0]);
-                        rptr = dynamic_cast<ConstantInt*>(operands[1]);
-                        if (lptr && rptr) {
-                            auto result = floder_->compute(instr, lptr, rptr);
-                            instr->replace_all_use_with(result);
-                            wait_delete.emplace_back(instr);
-                        }
-                    } break;
-                    case Instruction::fadd:
-                    case Instruction::fsub:
-                    case Instruction::fmul:
-                    case Instruction::fdiv:
-                    case Instruction::fcmp: {
-                        ConstantFP *lptr, *rptr;
-                        lptr = dynamic_cast<ConstantFP*>(operands[0]);
-                        rptr = dynamic_cast<ConstantFP*>(operands[1]);
-                        if (lptr && rptr) {
-                            auto result = floder_->compute(instr, lptr, rptr);
-                            instr->replace_all_use_with(result);
-                            wait_delete.emplace_back(instr);
-                        }
-                    } break;
                     case Instruction::alloca:
+                    case Instruction::phi:
+                    case Instruction::call:
+                    case Instruction::getelementptr:
                         break;
+                    case Instruction::br: {
+                        if (operands.size() == 3) {
+                            ConstantInt* val =
+                                dynamic_cast<ConstantInt*>(operands[0]);
+                            if (val) {
+                                BasicBlock *if_true, *if_false;
+                                if_true =
+                                    dynamic_cast<BasicBlock*>(operands[1]);
+                                if_false =
+                                    dynamic_cast<BasicBlock*>(operands[2]);
+                                if (val->get_value())
+                                    BranchInst::create_br(if_true, bb);
+                                else
+                                    BranchInst::create_br(if_false, bb);
+                                wait_delete.emplace_back(instr);
+                            }
+                        }
+                    } break;
                     case Instruction::load: {
                         GlobalVariable* global_var =
                             dynamic_cast<GlobalVariable*>(operands[0]);
@@ -324,12 +313,7 @@ void ConstPropagation::run() {
                             }
                         }
                     } break;
-                    case Instruction::phi:
-                        break;
-                    case Instruction::call:
-                        break;
-                    case Instruction::getelementptr:
-                        break;
+
                     case Instruction::zext: {
                         ConstantInt* intptr =
                             dynamic_cast<ConstantInt*>(operands[0]);
@@ -357,8 +341,21 @@ void ConstPropagation::run() {
                             wait_delete.emplace_back(instr);
                         }
                     } break;
-                    default:
-                        break;
+                    default: {
+                        // include add, sub, mul, sdiv, cmp
+                        // fadd, fsub, fmul, fdiv, fcmp
+                        if (operands.size() == 2) {
+                            Constant *lval, *rval;
+                            lval = dynamic_cast<Constant*>(operands[0]);
+                            rval = dynamic_cast<Constant*>(operands[1]);
+                            if (lval && rval) {
+                                auto result =
+                                    floder_->compute(instr, lval, rval);
+                                instr->replace_all_use_with(result);
+                                wait_delete.emplace_back(instr);
+                            }
+                        }
+                    } break;
                 }  // end switch
                 dbg(instr);
             }  // end for (auto instr : bb->get_instructions())
