@@ -8,98 +8,431 @@
 
 ## 实验难点
 
-* 活跃变量分析中phi指令的处理和相应数据结构的设计
-* 常量和变量的判断
+- 活跃变量分析中 phi 指令的处理和相应数据结构的设计
+- 常量和变量的判断
 
 ## 实验设计
 
-* 常量传播
-    实现思路：
-    相应代码：
-    优化前后的IR对比（举一个例子）并辅以简单说明：
+- 常量传播
 
+  1.  实现思路：遍历 module 中每个函数每个基本块中的所有语句，根据指令的类型进行处理。
+  2.  load, store 指令：
+      1. 思路：处理全局变量在块内的常量传播。遇到 store 指令时，判断是否为全局变量，存储值是否为常量。如果均满足，将全局变量存入`global_is_const(std::unordered_set<GlobalVariable*>)`，将全局变量-值存入`global2*val`，分别为`std::unordered_map<GlobalVariable*, int> global2ival`和`std::unordered_map<GlobalVariable*, float> global2fval`，根据全局变量的类型进行区分。之后遇到 load 指令时，判断是否为全局变量，如果是，判断是否在`global_is_const`集合中，如果在，那么后续所有用到这个变量的语句，全部用对应常量进行替换，并将该 load 语句加入`wait_delete`等待后续删除。
+      1. 相应代码：
+      ```c++
+      case Instruction::load: {
+         GlobalVariable* global_var =
+             dynamic_cast<GlobalVariable*>(operands[0]);
+         if (global_var && global_is_const.find(global_var) !=
+                               global_is_const.cend()) {
+             if (global_var->get_type()
+                     ->get_pointer_element_type()
+                     ->is_integer_type()) {
+                 instr->replace_all_use_with(ConstantInt::get(
+                     global2ival[global_var], m_));
+                 wait_delete.emplace_back(instr);
+             } else if (global_var->get_type()
+                            ->get_pointer_element_type()
+                            ->is_float_type()) {
+                 instr->replace_all_use_with(ConstantFP::get(
+                     global2fval[global_var], m_));
+                 wait_delete.emplace_back(instr);
+             }
+         }
+      } break;
+      case Instruction::store: {
+         GlobalVariable* global_var =
+             dynamic_cast<GlobalVariable*>(operands[1]);
+         if (global_var) {
+             if (global_var->get_type()
+                     ->get_pointer_element_type()
+                     ->is_integer_type()) {
+                 ConstantInt* intptr =
+                     dynamic_cast<ConstantInt*>(operands[0]);
+                 if (intptr) {
+                     int val = intptr->get_value();
+                     global2ival[global_var] = val;
+                     global_is_const.insert(global_var);
+                 } else {
+                     global2ival.erase(global_var);
+                     global_is_const.erase(global_var);
+                 }
+             } else if (global_var->get_type()
+                            ->get_pointer_element_type()
+                            ->is_float_type()) {
+                 ConstantFP* fptr =
+                     dynamic_cast<ConstantFP*>(operands[0]);
+                 if (fptr) {
+                     float val = fptr->get_value();
+                     global2fval[global_var] = val;
+                     global_is_const.insert(global_var);
+                 } else {
+                     global2fval.erase(global_var);
+                     global_is_const.erase(global_var);
+                 }
+             }
+         }
+      } break;
+      ```
+  3.  br 指令：
+      1. 思路：判断分支条件是否为常量，如果是常量，根据常量值生成无条件跳转指令。
+      2. 相应代码
+      ```c++
+      case Instruction::br: {
+         if (operands.size() == 3) {
+             ConstantInt* val =
+                 dynamic_cast<ConstantInt*>(operands[0]);
+             if (val) {
+                 BasicBlock *if_true, *if_false;
+                 if_true =
+                     dynamic_cast<BasicBlock*>(operands[1]);
+                 if_false =
+                     dynamic_cast<BasicBlock*>(operands[2]);
+                 if (val->get_value())
+                     BranchInst::create_br(if_true, bb);
+                 else
+                     BranchInst::create_br(if_false, bb);
+                 wait_delete.emplace_back(instr);
+             }
+         }
+      } break;
+      ```
+  4.  zext 指令：
+      1. 思路：判断需要拓展的是否为整型常量，如果是，那么对于后续所有使用到拓展后变量的表达式，用常量替换掉。
+      2. 相应代码：
+         ```c++
+         case Instruction::zext: {
+             ConstantInt* intptr =
+                 dynamic_cast<ConstantInt*>(operands[0]);
+             if (intptr) {
+                 instr->replace_all_use_with(
+                     ConstantInt::get(intptr->get_value(), m_));
+                 wait_delete.emplace_back(instr);
+             }
+         } break;
+         ```
+  5.  fptosi, sitofp 指令：
+      1. 思路：判断需要进行转换的是否为常量，如果是，那么对后续语句进行常量替换。
+      2. 相应代码：
+      ```c++
+      case Instruction::fptosi: {
+         ConstantFP* fptr =
+             dynamic_cast<ConstantFP*>(operands[0]);
+         if (fptr) {
+             instr->replace_all_use_with(
+                 ConstantInt::get(int(fptr->get_value()), m_));
+             wait_delete.emplace_back(instr);
+         }
+      } break;
+      case Instruction::sitofp: {
+         ConstantInt* intptr =
+             dynamic_cast<ConstantInt*>(operands[0]);
+         if (intptr) {
+             instr->replace_all_use_with(
+                 ConstantFP::get(intptr->get_value(), m_));
+             wait_delete.emplace_back(instr);
+         }
+      } break;
+      ```
+  6.  其余 add, sub, mul, sdiv, cmp, fadd, fsub, fmul, fdiv, fcmp 指令
+      1. 思路：由于操作类似，都放到 default 中，交给`ConstFolder::compute`进行处理，`compute`计算出相应的常量值，之后回到`run`中对后续语句进行常量替换。
+      2. 相应代码：
+         ```c++
+         default: {
+             // include add, sub, mul, sdiv, cmp
+             // fadd, fsub, fmul, fdiv, fcmp
+             if (operands.size() == 2) {
+                 Constant *lval, *rval;
+                 lval = dynamic_cast<Constant*>(operands[0]);
+                 rval = dynamic_cast<Constant*>(operands[1]);
+                 if (lval && rval) {
+                     auto result =
+                         floder_.compute(instr, lval, rval);
+                     instr->replace_all_use_with(result);
+                     wait_delete.emplace_back(instr);
+                 }
+             }
+         } break;
+         ```
+         ```cpp
+         Constant* ConstFolder::compute(Instruction* instr, Constant* value1,
+                                        Constant* value2) {
+             auto constant_int_ptr1 = dynamic_cast<ConstantInt*>(value1);
+             auto constant_int_ptr2 = dynamic_cast<ConstantInt*>(value2);
+             if (constant_int_ptr1 && constant_int_ptr2) {
+                 // both integer
+                 int c_value1 = constant_int_ptr1->get_value();
+                 int c_value2 = constant_int_ptr2->get_value();
+                 switch (instr->get_instr_type()) {
+                     case Instruction::add:
+                         return ConstantInt::get(c_value1 + c_value2, module_);
+                     case Instruction::sub:
+                         return ConstantInt::get(c_value1 - c_value2, module_);
+                     case Instruction::mul:
+                         return ConstantInt::get(c_value1 * c_value2, module_);
+                     case Instruction::sdiv:
+                         if (c_value2 != 0)
+                             return ConstantInt::get((int)(c_value1 / c_value2),
+                                                     module_);
+                     case Instruction::cmp: {
+                         auto cmp_instr = dynamic_cast<CmpInst*>(instr);
+                         switch (cmp_instr->get_cmp_op()) {
+                             case CmpInst::EQ:
+                                 return ConstantInt::get(c_value1 == c_value2, module_);
+                             case CmpInst::NE:
+                                 return ConstantInt::get(c_value1 != c_value2, module_);
+                             case CmpInst::GT:
+                                 return ConstantInt::get(c_value1 > c_value2, module_);
+                             case CmpInst::GE:
+                                 return ConstantInt::get(c_value1 >= c_value2, module_);
+                             case CmpInst::LT:
+                                 return ConstantInt::get(c_value1 < c_value2, module_);
+                             case CmpInst::LE:
+                                 return ConstantInt::get(c_value1 <= c_value2, module_);
+                             default:
+                                 return nullptr;
+                         }
+                     }
+                     default:
+                         return nullptr;
+                 }
+             } else {
+                 // both are float
+                 auto constant_fp_ptr1 = dynamic_cast<ConstantFP*>(value1);
+                 auto constant_fp_ptr2 = dynamic_cast<ConstantFP*>(value2);
+                 float c_value1, c_value2;
+                 c_value1 = constant_fp_ptr1->get_value();
+                 c_value2 = constant_fp_ptr2->get_value();
+                 switch (instr->get_instr_type()) {
+                     case Instruction::fadd:
+                         return ConstantFP::get(c_value1 + c_value2, module_);
+                     case Instruction::fsub:
+                         return ConstantFP::get(c_value1 - c_value2, module_);
+                     case Instruction::fmul:
+                         return ConstantFP::get(c_value1 * c_value2, module_);
+                     case Instruction::fdiv:
+                         if (c_value2 != 0.0)
+                             return ConstantFP::get(c_value1 / c_value2, module_);
+                     case Instruction::fcmp: {
+                         auto cmp_instr = dynamic_cast<FCmpInst*>(instr);
+                         switch (cmp_instr->get_cmp_op()) {
+                             case FCmpInst::EQ:
+                                 return ConstantInt::get(c_value1 == c_value2, module_);
+                             case FCmpInst::NE:
+                                 return ConstantInt::get(c_value1 != c_value2, module_);
+                             case FCmpInst::GT:
+                                 return ConstantInt::get(c_value1 > c_value2, module_);
+                             case FCmpInst::GE:
+                                 return ConstantInt::get(c_value1 >= c_value2, module_);
+                             case FCmpInst::LT:
+                                 return ConstantInt::get(c_value1 < c_value2, module_);
+                             case FCmpInst::LE:
+                                 return ConstantInt::get(c_value1 <= c_value2, module_);
+                             default:
+                                 return nullptr;
+                         }
+                     }
+                     default:
+                         return nullptr;
+                 }
+             }
+         }
+         ```
+  7.  优化前后的 IR 对比（举一个例子）并辅以简单说明：
+      源代码为
 
-* 循环不变式外提
-    实现思路：
-    相应代码：
-    优化前后的IR对比（举一个例子）并辅以简单说明：
-* 活跃变量分析
-    对不同种类的指令进行分析，将变量加入到use集合和def集合中，并利用动态转换判断是否为常量(如下store指令操作)
-    
-    ```
-    if (instr->is_store()) {
-        auto l_val =
-            dynamic_cast<StoreInst *>(instr)->get_lval();
-        auto r_val =
-            dynamic_cast<StoreInst *>(instr)->get_rval();
-        if ((def.find(l_val) == def.end()) &&
-            (dynamic_cast<ConstantInt *>(l_val) == nullptr)) {
-            use.insert(l_val);
-        }
-        if ((def.find(r_val) == def.end()) &&
-            (dynamic_cast<ConstantInt *>(r_val) == nullptr) &&
-            (dynamic_cast<ConstantFP *>(r_val) == nullptr)) {
-            use.insert(r_val);
-        }
-    ```
-    对于phi指令，设计phi_uses结构进行记录，记录的值为变量和对应进入的BasicBlock。
-    ```
-    if (instr->is_phi()) {
-        for (int i = 0; i < instr->get_num_operand() / 2; i++) {
-            auto val = instr->get_operand(2 * i);
-            if (def.find(val) == def.end() &&
-                dynamic_cast<ConstantInt *>(val) == nullptr &&
-                dynamic_cast<ConstantFP *>(val) == nullptr) {
-                use.insert(val);
-                phi_uses[bb].insert(
-                    {val, dynamic_cast<BasicBlock *>(
-                              instr->get_operand(2 * i + 1))});
-            }
-        }
-        if (use.find(instr) == use.end()) {
-            def.insert(instr);
-    }
-    ```
-    获取了每个BasicBlock的use集合和def集合后，按照书上的算法计算每个BasicBlock的in集合和def集合
-    ```
-    for (auto bb : func->get_basic_blocks()) {
-        std::set<Value *> empty_set;
-        live_in[bb] = empty_set;
-        live_out[bb] = empty_set;
-    }
-    bool is_change = true;
-    while (is_change) {
-        is_change = false;
-        for (auto bb : func->get_basic_blocks()) {
-            for (auto s : bb->get_succ_basic_blocks()) {
-                for (auto b : live_in[s]) {
-                    if (phi_uses.find(s) == phi_uses.end() ||
-                        phi_uses[s].find(b) == phi_uses[s].end() ||
-                        phi_uses[s][b] == bb) {
-                        live_out[bb].insert(b);
-                    }
-                }
-            }
-            std::set<Value *> new_in_bb = live_out[bb];
-            for (auto op : bb2def[bb]) {
-                if (new_in_bb.find(op) != new_in_bb.end()) {
-                    new_in_bb.erase(op);
-                }
-            }
-            for (auto op : bb2use[bb]) {
-                new_in_bb.insert(op);
-            }
-            if (new_in_bb != live_in[bb]) {
-                is_change = true;
-            }
-            live_in[bb] = new_in_bb;
-        }
-    }
-    ```
+      ```c
+      int a;
+      float b;
+
+      int test(void) {
+          float c;
+          int d;
+          float e;
+          a = 3;
+          b = 3.14;
+          c = a + b;
+          d = 2 * a;
+          e = c / d;
+          if (e < c) {
+              c = e * c;
+          }
+          return d;
+      }
+
+      int main(void) {
+          test();
+          return 0;
+      }
+      ```
+
+      没开 ConstPropagation 时，生成的 IR
+
+      ```llvm
+      @a = global i32 zeroinitializer
+      @b = global float zeroinitializer
+      declare i32 @input()
+
+      declare void @output(i32)
+
+      declare void @outputFloat(float)
+
+      declare void @neg_idx_except()
+
+      define i32 @test() {
+      label_entry:
+        store i32 3, i32* @a
+        store float 0x40091eb860000000, float* @b
+        %op3 = load i32, i32* @a
+        %op4 = load float, float* @b
+        %op5 = sitofp i32 %op3 to float
+        %op6 = fadd float %op5, %op4
+        %op7 = load i32, i32* @a
+        %op8 = mul i32 2, %op7
+        %op11 = sitofp i32 %op8 to float
+        %op12 = fdiv float %op6, %op11
+        %op15 = fcmp ult float %op12,%op6
+        %op16 = zext i1 %op15 to i32
+        %op17 = icmp ne i32 %op16, 0
+        br i1 %op17, label %label18, label %label22
+      label18:        ; preds = %label_entry
+        %op21 = fmul float %op12, %op6
+        br label %label22
+      label22:        ; preds = %label_entry, %label18
+        %op24 = phi float [ %op6, %label_entry ], [ %op21,  %label18 ]
+        ret i32 %op8
+      }
+      define i32 @main() {
+      label_entry:
+        %op0 = call i32 @test()
+        ret i32 0
+      }
+      ```
+
+      开了之后的生成的 IR
+
+      ```llvm
+      @a = global i32 zeroinitializer
+      @b = global float zeroinitializer
+      declare i32 @input()
+
+      declare void @output(i32)
+
+      declare void @outputFloat(float)
+
+      declare void @neg_idx_except()
+
+      define i32 @test() {
+      label_entry:
+        store i32 3, i32* @a
+        store float 0x40091eb860000000, float* @b
+        br label %label18
+      label18:        ; preds = %label_entry%label_entry
+        br label %label22
+      label22:        ; preds = %label_entry, %label18
+        %op24 = phi float [ 0x40188f5c40000000, %label_entry ], [ 0x40192210e0000000, %label18 ]
+        ret i32 6
+      }
+      define i32 @main() {
+      label_entry:
+        %op0 = call i32 @test()
+        ret i32 0
+      }
+      ```
+
+      完成了以下常量传播
+
+      1. 根据 a, b 的常量值，先将 a 转换为 float 类型(%op5)，再计算出 c 的值(%op6)，完成两次常量传播。
+      2. 使用 a 的常量值，计算出 d 的常量值(%op8)，完成一次常量传播。
+      3. 将 d 转换为 float 类型(%op11)，再计算出 e 的常量值(%op12)，完成两次常量传播。
+      4. 对 c, e 进行比较，将结果拓展到 32 位，与 0 进行比较，确定分支跳转方向，由于均为常量，可以定值，最后生成一个无条件跳转指令`br label %label22`。
+
+- 循环不变式外提
+  实现思路：
+  相应代码：
+  优化前后的 IR 对比（举一个例子）并辅以简单说明：
+- 活跃变量分析
+  对不同种类的指令进行分析，将变量加入到 use 集合和 def 集合中，并利用动态转换判断是否为常量(如下 store 指令操作)
+
+  ```cpp
+  if (instr->is_store()) {
+      auto l_val =
+          dynamic_cast<StoreInst *>(instr)->get_lval();
+      auto r_val =
+          dynamic_cast<StoreInst *>(instr)->get_rval();
+      if ((def.find(l_val) == def.end()) &&
+          (dynamic_cast<ConstantInt *>(l_val) == nullptr)) {
+          use.insert(l_val);
+      }
+      if ((def.find(r_val) == def.end()) &&
+          (dynamic_cast<ConstantInt *>(r_val) == nullptr) &&
+          (dynamic_cast<ConstantFP *>(r_val) == nullptr)) {
+          use.insert(r_val);
+      }
+  ```
+
+  对于 phi 指令，设计 phi_uses 结构进行记录，记录的值为变量和对应进入的 BasicBlock。
+
+  ```cpp
+  if (instr->is_phi()) {
+      for (int i = 0; i < instr->get_num_operand() / 2; i++) {
+          auto val = instr->get_operand(2 * i);
+          if (def.find(val) == def.end() &&
+              dynamic_cast<ConstantInt *>(val) == nullptr &&
+              dynamic_cast<ConstantFP *>(val) == nullptr) {
+              use.insert(val);
+              phi_uses[bb].insert(
+                  {val, dynamic_cast<BasicBlock *>(
+                            instr->get_operand(2 * i + 1))});
+          }
+      }
+      if (use.find(instr) == use.end()) {
+          def.insert(instr);
+  }
+  ```
+
+  获取了每个 BasicBlock 的 use 集合和 def 集合后，按照书上的算法计算每个 BasicBlock 的 in 集合和 def 集合
+
+  ```cpp
+  for (auto bb : func->get_basic_blocks()) {
+      std::set<Value *> empty_set;
+      live_in[bb] = empty_set;
+      live_out[bb] = empty_set;
+  }
+  bool is_change = true;
+  while (is_change) {
+      is_change = false;
+      for (auto bb : func->get_basic_blocks()) {
+          for (auto s : bb->get_succ_basic_blocks()) {
+              for (auto b : live_in[s]) {
+                  if (phi_uses.find(s) == phi_uses.end() ||
+                      phi_uses[s].find(b) == phi_uses[s].end() ||
+                      phi_uses[s][b] == bb) {
+                      live_out[bb].insert(b);
+                  }
+              }
+          }
+          std::set<Value *> new_in_bb = live_out[bb];
+          for (auto op : bb2def[bb]) {
+              if (new_in_bb.find(op) != new_in_bb.end()) {
+                  new_in_bb.erase(op);
+              }
+          }
+          for (auto op : bb2use[bb]) {
+              new_in_bb.insert(op);
+          }
+          if (new_in_bb != live_in[bb]) {
+              is_change = true;
+          }
+          live_in[bb] = new_in_bb;
+      }
+  }
+  ```
 
 ### 实验总结
-
-此次实验有什么收获
+1. 了解到编译器如何利用pass进行代码优化。
+2. 知道了SSA生成的大体流程，其核心是phi指令的生成。
+3. 实现了常量传播，还有进一步优化的空间，比如全局变量块间传播，关键是循环的处理，数组常量的传播等。
 
 ### 实验反馈 （可选 不会评分）
 
@@ -107,4 +440,4 @@
 
 ### 组间交流 （可选）
 
-本次实验和哪些组（记录组长学号）交流了哪一部分信息
+无
