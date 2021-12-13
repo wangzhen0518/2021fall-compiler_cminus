@@ -12,17 +12,24 @@ void LoopInvHoist::run() {
 
     // 接下来由你来补充啦！
     //找到所有最内层循环
-    std::unordered_set<BasicBlock*> innerloopbase;
-    for (auto loop = loop_searcher.begin(); loop != loop_searcher.end();
-         loop++) {
-        auto base = loop_searcher.get_loop_base(*loop);
-        auto innerloop = loop_searcher.get_inner_loop(base);
-        auto ilp = loop_searcher.get_loop_base(innerloop);
-        innerloopbase.insert(ilp);
+    std::set<BasicBlock*> innerloopbase;
+    std::set<BasicBlock*> deleteloopbase;
+    for(auto loop=loop_searcher.begin();loop!=loop_searcher.end();loop++){
+        innerloopbase.insert(loop_searcher.get_loop_base(*loop));
     }
-    for (auto it : innerloopbase) {
-        auto loop = loop_searcher.get_inner_loop(it);
-        while (loop) {
+    for(auto loop=loop_searcher.begin();loop!=loop_searcher.end();loop++){
+        auto parent=loop_searcher.get_parent_loop(*loop);
+        if(parent){
+            deleteloopbase.insert(loop_searcher.get_loop_base(parent));
+        }
+    }
+    for(auto BB=deleteloopbase.begin();BB!=deleteloopbase.end();BB++){
+        if(innerloopbase.find(*BB)!=innerloopbase.end())
+            innerloopbase.erase(*BB);
+    }
+    for(auto it:innerloopbase){
+        auto loop=loop_searcher.get_inner_loop(it);
+        while(loop){
             loop_invariant.clear();
             find_loop_invariant(loop);  //找到循环不变式
             moveout_loop_invariant(loop, loop_searcher);  //循环不变式外提
