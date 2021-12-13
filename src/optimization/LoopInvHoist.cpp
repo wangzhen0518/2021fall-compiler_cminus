@@ -45,7 +45,7 @@ void LoopInvHoist::find_loop_invariant(BBset_t* loop){
         for(auto BB:*loop){
             for(auto ins:BB->get_instructions()){
                 bool flag=true;
-                if(ins->is_phi()||ins->is_call()||ins->is_void()||ins->is_alloca()||changedval.find(ins)==changedval.end()){
+                if(ins->is_phi()||ins->is_call()||ins->is_void()||ins->is_load()||ins->is_alloca()||changedval.find(ins)==changedval.end()){
                     continue;
                 }
                 for(auto operand:ins->get_operands()){
