@@ -31,12 +31,12 @@ void ActiveVars::run() {
                         auto r_val =
                             dynamic_cast<StoreInst *>(instr)->get_rval();
                         if ((def.find(l_val) == def.end()) &&
-                            (dynamic_cast<ConstantInt *>(l_val) == nullptr)) {
+                            (dynamic_cast<ConstantInt *>(l_val) == nullptr) &&
+                            (dynamic_cast<ConstantFP *>(l_val) == nullptr)) {
                             use.insert(l_val);
                         }
                         if ((def.find(r_val) == def.end()) &&
-                            (dynamic_cast<ConstantInt *>(r_val) == nullptr) &&
-                            (dynamic_cast<ConstantFP *>(r_val) == nullptr)) {
+                            (dynamic_cast<ConstantInt *>(r_val) == nullptr)) {
                             use.insert(r_val);
                         }
                     } else if (instr->is_load() || instr->is_zext() ||
