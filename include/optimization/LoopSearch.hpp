@@ -17,7 +17,7 @@ using BBset_t = std::unordered_set<BasicBlock *>;
 
 class LoopSearch : public Pass {
 public:
-    explicit LoopSearch(Module *m, bool dump = true) : Pass(m), dump(dump){};
+    explicit LoopSearch(Module *m, bool dump = false) : Pass(m), dump(dump){};
     ~LoopSearch() = default;
     void build_cfg(Function *func, std::unordered_set<CFGNode *> &result);
     void run() override;
