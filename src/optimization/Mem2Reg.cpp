@@ -26,14 +26,11 @@ void Mem2Reg::generate_phi() {
     std::set<Value *> global_live_var_name;
     std::map<Value *, std::set<BasicBlock *>> live_var_2blocks;
     for (auto bb : func_->get_basic_blocks()) {
-        std::set<Value *> var_is_killed;
         for (auto instr : bb->get_instructions()) {
             if (instr->is_store()) {
                 // store i32 a, i32 *b
                 // a is r_val, b is l_val
-                auto r_val = static_cast<StoreInst *>(instr)->get_rval();
                 auto l_val = static_cast<StoreInst *>(instr)->get_lval();
-
                 if (!IS_GLOBAL_VARIABLE(l_val) && !IS_GEP_INSTR(l_val)) {
                     global_live_var_name.insert(l_val);
                     live_var_2blocks[l_val].insert(bb);
@@ -46,12 +43,8 @@ void Mem2Reg::generate_phi() {
     std::map<std::pair<BasicBlock *, Value *>, bool>
         bb_has_var_phi;  // bb has phi for var
     for (auto var : global_live_var_name) {
-        std::vector<BasicBlock *> work_list;
-        work_list.assign(live_var_2blocks[var].begin(),
-                         live_var_2blocks[var].end());
-        // just
-        // std::vector<BasicBlock *> work_list(live_var_2blocks[var].begin(), \
-        // live_var_2blocks[var].end()); is ok
+        std::vector<BasicBlock *> work_list(live_var_2blocks[var].begin(),
+                                            live_var_2blocks[var].end());
         for (int i = 0; i < work_list.size(); i++) {
             auto bb = work_list[i];
             for (auto bb_dominance_frontier_bb :
