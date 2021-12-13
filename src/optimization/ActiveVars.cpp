@@ -30,103 +30,62 @@ void ActiveVars::run() {
                             dynamic_cast<StoreInst *>(instr)->get_lval();
                         auto r_val =
                             dynamic_cast<StoreInst *>(instr)->get_rval();
-                        if ((def.find(l_val) == def.end()) &&
-                            (dynamic_cast<ConstantInt *>(l_val) == nullptr) &&
-                            (dynamic_cast<ConstantFP *>(l_val) == nullptr)) {
-                            use.insert(l_val);
-                        }
+                        if (use.find(l_val) == use.end())
+                            def.insert(l_val);
                         if ((def.find(r_val) == def.end()) &&
-                            (dynamic_cast<ConstantInt *>(r_val) == nullptr)) {
+                            (dynamic_cast<Constant *>(r_val) == nullptr))
                             use.insert(r_val);
-                        }
-                    } else if (instr->is_load() || instr->is_zext() ||
-                               instr->is_si2fp() || instr->is_fp2si()) {
-                        auto l_val = instr->get_operand(0);
-                        if (def.find(l_val) == def.end()) {
-                            use.insert(l_val);
-                        }
-                        if (use.find(instr) == use.end()) {
-                            def.insert(instr);
-                        }
-                    } else if (instr->is_cmp() || instr->is_fcmp() ||
-                               instr->isBinary()) {
-                        auto l_val = instr->get_operand(0);
-                        auto r_val = instr->get_operand(1);
-                        if (def.find(l_val) == def.end() &&
-                            dynamic_cast<ConstantInt *>(l_val) == nullptr &&
-                            dynamic_cast<ConstantFP *>(l_val) == nullptr) {
-                            use.insert(l_val);
-                        }
-                        if (def.find(r_val) == def.end() &&
-                            dynamic_cast<ConstantInt *>(r_val) == nullptr &&
-                            dynamic_cast<ConstantFP *>(r_val) == nullptr) {
-                            use.insert(r_val);
-                        }
-                        if (use.find(instr) == use.end()) {
-                            def.insert(instr);
-                        }
-                    } else if (instr->is_gep()) {
-                        for (int i = 0; i < instr->get_num_operand(); i++) {
-                            auto val = instr->get_operand(i);
-                            if (def.find(val) == def.end() &&
-                                dynamic_cast<ConstantInt *>(val) == nullptr &&
-                                dynamic_cast<ConstantFP *>(val) == nullptr) {
-                                use.insert(val);
-                            }
-                            if (use.find(instr) == use.end()) {
-                                def.insert(instr);
-                            }
-                        }
                     } else if (instr->is_br()) {
-                        auto l_val = instr->get_operand(0);
-                        if (def.find(l_val) == def.end() &&
-                            dynamic_cast<ConstantInt *>(l_val) == nullptr &&
-                            dynamic_cast<ConstantFP *>(l_val) == nullptr &&
-                            dynamic_cast<BranchInst *>(instr)->is_cond_br()) {
-                            use.insert(l_val);
-                        }
-                    } else if (instr->is_call()) {
-                        for (int i = 1; i < instr->get_num_operand(); i++) {
-                            auto val = instr->get_operand(i);
-                            if ((def.find(val) == def.end()) &&
-                                (dynamic_cast<ConstantInt *>(val) == nullptr) &&
-                                (dynamic_cast<ConstantFP *>(val) == nullptr)) {
-                                use.insert(val);
-                            }
-                        }
-                        if ((use.find(instr) == use.end()) &&
-                            !instr->is_void()) {
-                            def.insert(instr);
-                        }
-                    } else if (instr->is_ret() &&
-                               !dynamic_cast<ReturnInst *>(instr)
-                                    ->is_void_ret()) {
-                        auto l_val = instr->get_operand(0);
-                        if (def.find(l_val) == def.end() &&
-                            dynamic_cast<ConstantInt *>(l_val) == nullptr &&
-                            dynamic_cast<ConstantFP *>(l_val) == nullptr) {
-                            use.insert(l_val);
+                        if (dynamic_cast<BranchInst *>(instr)->is_cond_br()) {
+                            auto l_val = instr->get_operand(0);
+                            if (def.find(l_val) == def.end() &&
+                                dynamic_cast<Constant *>(l_val) == nullptr)
+                                use.insert(l_val);
                         }
                     } else if (instr->is_phi()) {
                         for (int i = 0; i < instr->get_num_operand() / 2; i++) {
                             auto val = instr->get_operand(2 * i);
                             if (def.find(val) == def.end() &&
-                                dynamic_cast<ConstantInt *>(val) == nullptr &&
-                                dynamic_cast<ConstantFP *>(val) == nullptr) {
+                                dynamic_cast<Constant *>(val) == nullptr) {
                                 use.insert(val);
                                 phi_uses[bb].insert(
                                     {val, dynamic_cast<BasicBlock *>(
                                               instr->get_operand(2 * i + 1))});
                             }
                         }
-                        if (use.find(instr) == use.end()) {
+                        if (use.find(instr) == use.end())
                             def.insert(instr);
+                    } else if (instr->is_ret()) {
+                        if (!dynamic_cast<ReturnInst *>(instr)->is_void_ret()) {
+                            auto l_val = instr->get_operand(0);
+                            if (def.find(l_val) == def.end() &&
+                                dynamic_cast<Constant *>(l_val) == nullptr)
+                                use.insert(l_val);
                         }
+                    } else if (instr->is_call()) {
+                        for (int i = 1; i < instr->get_num_operand(); i++) {
+                            auto val = instr->get_operand(i);
+                            if ((def.find(val) == def.end()) &&
+                                (dynamic_cast<Constant *>(val) == nullptr))
+                                use.insert(val);
+                        }
+                        if (use.find(instr) == use.end())
+                            def.insert(instr);
+                    } else {
+                        for (int i = 0; i < instr->get_num_operand(); i++) {
+                            auto val = instr->get_operand(i);
+                            if (def.find(val) == def.end() &&
+                                dynamic_cast<Constant *>(val) == nullptr)
+                                use.insert(val);
+                        }
+                        if (use.find(instr) == use.end())
+                            def.insert(instr);
                     }
                 }
                 bb2use[bb] = use;
                 bb2def[bb] = def;
             }
+            // initialize
             for (auto bb : func->get_basic_blocks()) {
                 std::set<Value *> empty_set;
                 live_in[bb] = empty_set;
@@ -136,27 +95,22 @@ void ActiveVars::run() {
             while (is_change) {
                 is_change = false;
                 for (auto bb : func->get_basic_blocks()) {
-                    for (auto s : bb->get_succ_basic_blocks()) {
-                        for (auto b : live_in[s]) {
+                    // out = union(succ)
+                    for (auto s : bb->get_succ_basic_blocks())
+                        for (auto val : live_in[s])
                             if (phi_uses.find(s) == phi_uses.end() ||
-                                phi_uses[s].find(b) == phi_uses[s].end() ||
-                                phi_uses[s][b] == bb) {
-                                live_out[bb].insert(b);
-                            }
-                        }
-                    }
+                                phi_uses[s].find(val) == phi_uses[s].end() ||
+                                phi_uses[s][val] == bb)
+                                live_out[bb].insert(val);
+
+                    // in = use union (out sub def)
                     std::set<Value *> new_in_bb = live_out[bb];
-                    for (auto op : bb2def[bb]) {
-                        if (new_in_bb.find(op) != new_in_bb.end()) {
-                            new_in_bb.erase(op);
-                        }
-                    }
-                    for (auto op : bb2use[bb]) {
+                    for (auto op : bb2def[bb])
+                        new_in_bb.erase(op);
+                    for (auto op : bb2use[bb])
                         new_in_bb.insert(op);
-                    }
-                    if (new_in_bb != live_in[bb]) {
+                    if (new_in_bb != live_in[bb])
                         is_change = true;
-                    }
                     live_in[bb] = new_in_bb;
                 }
             }

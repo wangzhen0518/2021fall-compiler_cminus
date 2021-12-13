@@ -6,10 +6,6 @@
 
 #include "logging.hpp"
 
-LoopSearch::LoopSearch(Module* m, bool dump) : Pass(m), dump(dump) {
-    printf("create loop search\n");
-}
-
 struct CFGNode {
     std::unordered_set<CFGNodePtr> succs;
     std::unordered_set<CFGNodePtr> prevs;

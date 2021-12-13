@@ -56,9 +56,9 @@ int main(int argc, char **argv) {
         else if (argv[i] == "-active-vars"s)
             activevars = true;
         else {
-            if (input_path.empty()) {
+            if (input_path.empty())
                 input_path = argv[i];
-            } else {
+            else {
                 print_help(argv[0]);
                 return 0;
             }
@@ -81,11 +81,10 @@ int main(int argc, char **argv) {
                           << " has unknown filetype!" << std::endl;
                 return -1;
             }
-            if (emit) {
+            if (emit)
                 target_path = input_path.substr(0, pos);
-            } else {
+            else
                 target_path = input_path.substr(0, pos);
-            }
         }
     }
 
@@ -101,7 +100,7 @@ int main(int argc, char **argv) {
     if (mem2reg)
         PM.add_pass<Mem2Reg>();
     if (loop_search)
-        PM.add_pass<LoopSearch>(true);
+        PM.add_pass<LoopSearch>();
     if (const_propagation)
         PM.add_pass<ConstPropagation>();
     if (activevars)

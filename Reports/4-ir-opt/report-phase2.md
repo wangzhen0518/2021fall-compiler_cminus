@@ -8,43 +8,45 @@
 
 ## 实验要求
 
-请按照自己的理解，写明本次实验需要干什么
+1. 阅读`Mem2Reg`与`LoopSearch`两个优化，以及和`Mem2Reg`相关的`Dominators`(生成结点之间的支配信息)。
+2. `LoopSearch`得到循环的信息，之后通过`LoopInvHoist`实现循环不变式外提。
+3. `Mem2Reg`将先前生成的 IR 转换为 SSA 形式，之后通过`ConstPropagation`实现常量传播和死代码删除，即对于值为常量，可以在编译期间计算出结果的变量，将后续所有用到这个变量的表达式中的该变量，全部替换为常量，并将计算出常量的语句删除(死代码)。
+4. 通过`ActiveVars`实现活跃变量分析，将结果以 json 文件的形式输出。
 
 ## 实验难点
 
-- 活跃变量分析中 phi 指令的处理和相应数据结构的设计
+- 循环不变式的判断
 - 常量和变量的判断
+- 活跃变量分析中 phi 指令的处理和相应数据结构的设计
 
 ## 实验设计
 
 - 循环不变式外提
-  首先找到所有的的最底层循环：
+  首先找到所有的的最底层循环：先把所有循环的入口都存起来，之后把外层的循环全都删除
 
   ```cpp
-      //找到所有最内层循环
-      std::set<BasicBlock*> innerloopbase;
-      for(auto loop=loop_searcher.begin();loop!=loop_searcher.end();loop++){
-          auto base=loop_searcher.get_loop_base(*loop);
-          auto innerloop=loop_searcher.get_inner_loop(base);
-          auto ilp=loop_searcher.get_loop_base(innerloop);
-          if(innerloopbase.find(ilp)==innerloopbase.end()){
-              innerloopbase.insert(ilp);
-          }
-      }
+    //找到所有最内层循环
+    std::unordered_set<BasicBlock*> innerloopbase;
+    for (auto loop = loop_searcher.begin(); loop != loop_searcher.end(); loop++)
+        innerloopbase.insert(loop_searcher.get_loop_base(*loop));
+
+    for (auto loop = loop_searcher.begin(); loop != loop_searcher.end(); loop++)
+        innerloopbase.erase(
+            loop_searcher.get_loop_base(loop_searcher.get_parent_loop(*loop)));
   ```
 
   对每个最底层循环查找循环不变式并外提，然后查找外层循环的循环不变式
 
   ```cpp
-      for(auto it:innerloopbase){
-          auto loop=loop_searcher.get_inner_loop(it);
-          while(loop){
-              loop_invariant.clear();
-              find_loop_invariant(loop);//找到循环不变式
-              moveout_loop_invariant(loop,loop_searcher);//循环不变式外提
-              loop=loop_searcher.get_parent_loop(loop);//找到外层循环
-          }
-      }
+    for(auto it:innerloopbase){
+        auto loop=loop_searcher.get_inner_loop(it);
+        while(loop){
+            loop_invariant.clear();
+            find_loop_invariant(loop);//找到循环不变式
+            moveout_loop_invariant(loop,loop_searcher);//循环不变式外提
+            loop=loop_searcher.get_parent_loop(loop);//找到外层循环
+        }
+    }
   ```
 
   在每层循环中，先将所有会改变寄存器值的指令记为 changedval，然后对所有 changedval 进行判断，假如操作数的值都没有发生变化，认为其为循环不变式，将其从 changedval 中剔除。load 指令，call 指令即使操作数不变也无法保证为循环不变式子，比如数组元素，phi 指令无法外提，均排除。假如一个循环中得到了新的循环不变式，继续循环。
@@ -86,25 +88,23 @@
   外提循环不变式时，对循环入口的所有非本循环基本块前驱，将其最后的 br 指令删除，将循环不变式加入再添回 br 指令。
 
   ```cpp
-  if(loop_invariant.size()==0) return;//没有循环不变式直接返回
-      std::set<BasicBlock*> pre_loop;
-      auto loopbase=loop_searcher.get_loop_base(loop);
-      for(auto preBB:loopbase->get_pre_basic_blocks()){
-          if (loop->find(preBB) == loop->end())
-              pre_loop.insert(preBB);
-      }
-      for(auto pre=pre_loop.begin();pre!=pre_loop.end();pre++){
-          auto preBB=*pre;
-          auto br=preBB->get_terminator();
-          if(br->is_br()){
-              preBB->delete_instr(br);//删除br
-              for(auto pair:loop_invariant){//外提不变式
-                  pair.first->delete_instr(pair.second);
-                  preBB->add_instruction(pair.second);
-              }
-              preBB->add_instruction(br);//添回br
-          }
-      }
+    if (loop_invariant.size() == 0)
+        return;  //没有循环不变式直接返回
+
+    auto pre_loop = loop_searcher.get_loop_base(loop)->get_pre_basic_blocks();
+    for (auto preBB : pre_loop) {
+        if (loop->find(preBB) == loop->end()) {
+            auto br = preBB->get_terminator();
+            if (br->is_br()) {
+                preBB->delete_instr(br);            //删除br
+                for (auto pair : loop_invariant) {  //外提不变式
+                    pair.first->delete_instr(pair.second);
+                    preBB->add_instruction(pair.second);
+                }
+                preBB->add_instruction(br);  //添回br
+            }
+        }
+    }
   ```
 
   优化前后的 IR 对比（举一个例子）并辅以简单说明：
@@ -605,6 +605,7 @@
 
 1. 了解到编译器如何利用 pass 进行代码优化。
 2. 知道了 SSA 生成的大体流程，其核心是 phi 指令的生成。
+4. 了解如何实现活跃变量分析，将书上的理论予以实践。
 3. 实现了常量传播，还有进一步优化的空间，比如全局变量块间传播，其关键是循环的处理，还有数组常量的传播等。
 
 ### 实验反馈 （可选 不会评分）

@@ -1,3 +1,4 @@
+.vscode/
 build
 temp*
 test*
@@ -6,7 +7,9 @@ syntree_easy/
 syntree_normal/
 syntree_hard/
 .clang-format
-.vscode/
+
 *.code-workspace
 *.png
 *.dot
+*.ll
+*.json
