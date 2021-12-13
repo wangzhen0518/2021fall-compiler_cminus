@@ -40,7 +40,6 @@ public:
         fptosi,
         sitofp
         // float binary operators Logical operators
-
     };
     // create instruction, auto insert to bb
     // ty here is result type
